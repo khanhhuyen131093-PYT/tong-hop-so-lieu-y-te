@@ -1,40 +1,26 @@
-# Tổng hợp số liệu Phòng Y tế — V6.6.0
+# Tổng hợp số liệu Phòng Y tế — V6.7.0
 
-Phiên bản V6.6.0 giữ nguyên kiến trúc:
+Kiến trúc được giữ nguyên:
 
 - GitHub Pages làm khung PWA.
 - Google Apps Script xử lý giao diện và nghiệp vụ.
 - Google Sheet lưu dữ liệu tập trung.
 
-## Thay đổi chính
+## Nội dung V6.7.0
 
-- Trang Nhập liệu chỉ còn 3 cột: **Chỉ tiêu – Số liệu hiện tại – Thao tác**.
-- Bỏ hoàn toàn các ô **Số bổ sung**, **Ghi chú**, **Sau khi lưu** và thanh lưu cuối trang.
-- Chỉ dùng một luồng cập nhật trực tiếp: chọn **Chỉnh sửa**, nhập tổng đúng rồi lưu.
-- Cho phép nhập giá trị mới lớn hơn, nhỏ hơn hoặc bằng `0`.
-- Chỉ tiêu chưa có bản ghi cũng có thể được ghi nhận lần đầu, kể cả giá trị `0`.
-- Khi bấm lưu, nút đổi ngay thành **Đang lưu...**, có vòng quay và khóa toàn bộ thao tác trong cửa sổ để chống bấm nhiều lần.
-- Sau khi Apps Script trả kết quả, cửa sổ tự đóng, bảng cập nhật ngay và dữ liệu Tổng quan đồng bộ nền.
-- Không yêu cầu nhập ghi chú; hệ thống tự lưu lịch sử giá trị trước–sau và người thực hiện.
+- Bỏ thời gian “Đã đồng bộ/Cập nhật lúc” khỏi Tổng quan.
+- Bỏ bốn thẻ dashboard thống kê; Tổng quan tập trung vào bộ lọc và danh sách chỉ tiêu.
+- Không hiển thị thông báo thành công kỹ thuật “Dữ liệu đã sẵn sàng” hoặc “Danh sách đã sẵn sàng”.
+- Quản trị được tách thành hai thẻ: Tài khoản và Chỉ tiêu.
+- Quản trị viên có thể thêm, sửa, ngừng sử dụng và khôi phục chỉ tiêu.
+- Mã chỉ tiêu được tự tạo từ tên nếu để trống; mã được khóa sau khi tạo để bảo toàn liên kết lịch sử.
+- Xóa chỉ tiêu là xóa mềm: chỉ chuyển sang “Ngừng sử dụng”; số liệu lịch sử không bị xóa.
 
-## Cập nhật Apps Script
+## Cập nhật
 
-1. Sao lưu `Code.gs` hiện tại.
-2. Sao chép toàn bộ `apps-script/Code.gs` trong gói này.
-3. Dán đè toàn bộ mã cũ và lưu.
-4. Triển khai **phiên bản mới** trên deployment hiện tại để giữ URL `/exec`.
+1. Dán đè toàn bộ `apps-script/Code.gs` vào dự án Apps Script.
+2. Triển khai một phiên bản Web App mới nhưng giữ nguyên deployment `/exec` hiện tại.
+3. Tải toàn bộ tệp GitHub lên thư mục gốc repository và ghi đè bản cũ.
+4. Nhấn `Ctrl + F5`, hoặc đóng/mở lại PWA để nhận cache V6.7.0.
 
-Không cần chạy lại `initializeApplication()` nếu Google Sheet đang hoạt động ổn định.
-
-## Cập nhật GitHub Pages
-
-1. Đưa toàn bộ tệp trong thư mục này lên thư mục gốc repository.
-2. Ghi đè tệp cũ và commit.
-3. Chờ GitHub Pages hoàn tất.
-4. Nhấn `Ctrl + F5` hoặc đóng/mở lại PWA để nhận cache V6.6.0.
-
-## An toàn dữ liệu
-
-- Không xóa sheet, cột hoặc bản ghi hiện hữu.
-- Dữ liệu cùng ngày và mã chỉ tiêu được cập nhật tại dòng hiện hữu.
-- Mọi thay đổi vẫn ghi vào `LỊCH SỬ SỐ LIỆU` và `NHẬT KÝ` nội bộ.
+Không cần chạy lại `initializeApplication()` nếu các sheet hiện tại đã hoạt động bình thường.
