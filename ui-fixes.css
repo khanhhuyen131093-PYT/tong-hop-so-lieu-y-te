@@ -1,61 +1,266 @@
-/* UI production 7.0.4 — Google-only authentication */
-.auth-google-only {
-  width: min(620px, 100%);
-  margin-inline: auto;
-  padding: clamp(24px, 4vw, 40px);
+/* UI production 7.0.5 — branded Google-only authentication */
+.auth-legacy-controls { display: none !important; }
+
+
+/* Dùng logo ứng dụng thật ở thanh tiêu đề. */
+.brand-mark-logo {
+  padding: 0 !important;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,.28) !important;
+  background: transparent !important;
+  box-shadow: 0 9px 24px rgba(72,11,39,.18);
 }
-.auth-google-only .auth-panel { padding: 0; }
-.google-login-hero {
+.brand-mark-logo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* ===== MÀN HÌNH ĐĂNG NHẬP ===== */
+.login-stage {
+  width: min(980px, 100%);
+  margin: 18px auto 0;
+  padding: clamp(10px, 2vw, 22px) 0 34px;
+}
+
+.login-shell {
+  min-height: 430px;
+  display: grid;
+  grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr);
+  overflow: hidden;
+  border: 1px solid rgba(145, 45, 83, .15);
+  border-radius: 30px;
+  background: #fff;
+  box-shadow: 0 28px 70px rgba(100, 24, 58, .13);
+}
+
+.login-brand-panel {
+  position: relative;
+  min-height: 430px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: clamp(34px, 5vw, 58px);
+  overflow: hidden;
+  color: #fff;
+  background:
+    linear-gradient(145deg, #74163f 0%, #a9255e 52%, #c93f77 100%);
+}
+
+.login-brand-glow {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.06);
+}
+.login-brand-glow-one {
+  width: 270px;
+  height: 270px;
+  top: -110px;
+  right: -105px;
+}
+.login-brand-glow-two {
+  width: 210px;
+  height: 210px;
+  left: -105px;
+  bottom: -105px;
+}
+
+.login-logo-wrap {
+  position: relative;
+  z-index: 1;
+  width: 104px;
+  height: 104px;
+  margin-bottom: 28px;
+  padding: 8px;
+  border: 1px solid rgba(255,255,255,.35);
+  border-radius: 27px;
+  background: rgba(255,255,255,.12);
+  box-shadow: 0 18px 42px rgba(60, 8, 31, .24);
+  backdrop-filter: blur(10px);
+}
+.login-app-logo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 21px;
+  object-fit: cover;
+}
+
+.login-brand-copy {
+  position: relative;
+  z-index: 1;
+}
+.login-brand-copy > span {
+  display: block;
+  margin-bottom: 12px;
+  color: rgba(255,255,255,.77);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .12em;
+  line-height: 1.55;
+}
+.login-brand-copy h2 {
+  margin: 0;
+  color: #fff;
+  font-size: clamp(31px, 3.4vw, 44px);
+  line-height: 1.08;
+  letter-spacing: -.035em;
+}
+.login-brand-copy p {
+  max-width: 350px;
+  margin: 17px 0 0;
+  color: rgba(255,255,255,.79);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.login-action-panel {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 20px;
+  padding: clamp(38px, 6vw, 72px);
+  background:
+    radial-gradient(circle at 100% 0%, rgba(211,79,130,.08), transparent 17rem),
+    #fff;
 }
-.google-login-hero h2 { margin: 0 0 5px; }
-.google-login-hero p { margin: 0; color: var(--muted, #75636b); line-height: 1.5; }
-.google-login-icon {
-  width: 54px;
-  height: 54px;
-  flex: 0 0 54px;
-  display: grid;
-  place-items: center;
-  border: 1px solid #eadce2;
-  border-radius: 16px;
-  background: #fff;
-  box-shadow: 0 8px 22px rgba(108, 25, 63, .08);
+.login-action-panel .auth-panel {
+  width: 100%;
+  padding: 0;
 }
-.google-login-icon svg { width: 30px; height: 30px; }
+.login-action-copy { margin-bottom: 31px; }
+.login-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  margin-bottom: 15px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #fbe5ed;
+  color: #8e1e50;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: .1em;
+}
+.login-action-copy h2 {
+  margin: 0 0 9px;
+  color: #641235;
+  font-size: clamp(30px, 3vw, 38px);
+  letter-spacing: -.025em;
+}
+.login-action-copy p {
+  max-width: 390px;
+  margin: 0;
+  color: #78656d;
+  font-size: 14px;
+  line-height: 1.65;
+}
+
 .auth-provider-google-only {
-  display: flex;
-  justify-content: center;
-  margin-top: 4px;
+  display: block;
+  margin: 0;
 }
-.btn-google {
-  min-width: min(360px, 100%);
-  min-height: 52px;
+.btn-login-primary {
+  width: 100%;
+  min-height: 58px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 11px;
-  border: 1px solid #e3d5dc;
-  background: #fff;
-  color: #721740;
-  box-shadow: 0 10px 22px rgba(108, 25, 63, .08);
+  gap: 13px;
+  border: 0;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #8e1e50, #bd2f6a);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 800;
+  box-shadow: 0 14px 28px rgba(169,37,94,.22);
+  transition: transform .18s ease, box-shadow .18s ease, filter .18s ease;
 }
-.btn-google:hover { background: #fff8fb; border-color: #d9b9c7; }
-.google-button-mark {
-  width: 27px;
-  height: 27px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: #fff;
-  color: #4285f4;
-  font: 800 20px/1 Arial, sans-serif;
+.btn-login-primary svg {
+  width: 21px;
+  height: 21px;
+  transition: transform .18s ease;
 }
-.auth-legacy-controls { display: none !important; }
-@media (max-width: 620px) {
-  .auth-google-only { padding: 22px 18px; }
-  .google-login-hero { align-items: flex-start; }
-  .btn-google { width: 100%; min-width: 0; }
+.btn-login-primary:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.02);
+  box-shadow: 0 18px 34px rgba(169,37,94,.27);
+}
+.btn-login-primary:hover svg { transform: translateX(3px); }
+.btn-login-primary:active { transform: translateY(0); }
+
+.login-security-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 20px;
+  padding: 14px 15px;
+  border: 1px solid #f0dce5;
+  border-radius: 14px;
+  background: #fff9fb;
+  color: #7b6971;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.login-security-note svg {
+  width: 19px;
+  height: 19px;
+  flex: 0 0 19px;
+  margin-top: 1px;
+  color: #a9255e;
+}
+
+/* Giữ ô tìm kiếm Tổng quan luôn trống khi trình duyệt khôi phục form. */
+#dashboardSearch:-webkit-autofill,
+#dashboardSearch:-webkit-autofill:hover,
+#dashboardSearch:-webkit-autofill:focus {
+  -webkit-text-fill-color: inherit !important;
+  transition: background-color 9999s ease-out 0s;
+}
+
+@media (max-width: 820px) {
+  .login-stage { margin-top: 8px; }
+  .login-shell {
+    grid-template-columns: 1fr;
+    border-radius: 24px;
+  }
+  .login-brand-panel {
+    min-height: 0;
+    padding: 30px;
+  }
+  .login-logo-wrap {
+    width: 76px;
+    height: 76px;
+    margin-bottom: 18px;
+    border-radius: 21px;
+  }
+  .login-app-logo { border-radius: 16px; }
+  .login-brand-copy h2 { font-size: 30px; }
+  .login-brand-copy h2 br { display: none; }
+  .login-brand-copy p { margin-top: 12px; }
+  .login-action-panel { padding: 32px 30px 36px; }
+}
+
+@media (max-width: 560px) {
+  .login-stage { padding: 0 0 24px; }
+  .login-shell {
+    border-radius: 20px;
+    box-shadow: 0 18px 42px rgba(100, 24, 58, .11);
+  }
+  .login-brand-panel { padding: 24px 22px; }
+  .login-logo-wrap {
+    width: 66px;
+    height: 66px;
+    margin-bottom: 16px;
+    padding: 5px;
+  }
+  .login-brand-copy > span { font-size: 9px; }
+  .login-brand-copy h2 { font-size: 26px; }
+  .login-brand-copy p { font-size: 12px; }
+  .login-action-panel { padding: 27px 22px 30px; }
+  .login-action-copy { margin-bottom: 23px; }
+  .login-action-copy h2 { font-size: 28px; }
+  .btn-login-primary { min-height: 54px; border-radius: 14px; }
+  .login-security-note { padding: 12px 13px; }
 }
