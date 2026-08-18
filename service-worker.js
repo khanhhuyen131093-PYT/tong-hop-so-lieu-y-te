@@ -1,17 +1,25 @@
 'use strict';
 
+const APP_VERSION = '9.8.2';
 const CACHE_PREFIX = 'tong-hop-so-lieu-y-te-firebase-';
-const CACHE_NAME = CACHE_PREFIX + 'v8.0.3';
+const CACHE_NAME = CACHE_PREFIX + 'v' + APP_VERSION;
+const LEGACY_CACHE_NAMES = new Set(['yte-tan-hiep-v5']);
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css?v=8.0.3',
-  './ui-fixes.css?v=8.0.3',
-  './reports.css?v=8.0.3',
-  './app-config.js?v=8.0.3',
-  './app.js?v=8.0.3',
-  './reports.js?v=8.0.3',
-  './ui-fixes.js?v=8.0.3',
+  './styles.css?v=9.8.2',
+  './reports.css?v=9.8.2',
+  './journeys.css?v=9.8.2',
+  './app-config.js?v=9.8.2',
+  './ui.js?v=9.8.2',
+  './update-manager.js?v=9.8.2',
+  './notifications.js?v=9.8.2',
+  './app.js?v=9.8.2',
+  './report-preview.js',
+  './excel-export.js',
+  './reports.js?v=9.8.2',
+  './journeys.js?v=9.8.2',
+  './version.json',
   './manifest.webmanifest',
   './offline.html',
   './assets/favicon-32.png',
@@ -22,9 +30,7 @@ const APP_SHELL = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => cache.addAll(APP_SHELL))
-      .then(() => self.skipWaiting())
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL))
   );
 });
 
@@ -32,11 +38,24 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
       .then((keys) => Promise.all(
-        keys.filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME)
-          .map((key) => caches.delete(key))
+        keys.filter((key) =>
+          (key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME) ||
+          LEGACY_CACHE_NAMES.has(key)
+        ).map((key) => caches.delete(key))
       ))
       .then(() => self.clients.claim())
   );
+});
+
+self.addEventListener('message', (event) => {
+  const data = event.data || {};
+  if (data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+    return;
+  }
+  if (data.type === 'GET_VERSION' && event.source) {
+    event.source.postMessage({ type: 'YTE_SW_VERSION', version: APP_VERSION });
+  }
 });
 
 self.addEventListener('fetch', (event) => {
@@ -48,16 +67,19 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(request, { cache: 'no-store' })
         .then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+          if (response && response.ok) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put('./index.html', copy));
+          }
           return response;
         })
-        .catch(() => caches.match(request).then((cached) => cached || caches.match('./offline.html')))
+        .catch(() => caches.match('./index.html').then((cached) => cached || caches.match('./offline.html')))
     );
     return;
   }
 
-  const networkFirst = /(?:app-config|app|reports)\.js$/.test(url.pathname);
+  // Code/version files luôn ưu tiên mạng để các máy nhận source mới nhanh nhất.
+  const networkFirst = /\.(?:js|css|json|webmanifest)$/.test(url.pathname) || url.pathname.endsWith('/version.json');
   if (networkFirst) {
     event.respondWith(
       fetch(request, { cache: 'no-store' })

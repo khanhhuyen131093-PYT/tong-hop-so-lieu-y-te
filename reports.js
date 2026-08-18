@@ -5,6 +5,7 @@ import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/
 import {
   getDatabase,
   get,
+  onValue,
   push,
   query,
   ref,
@@ -36,10 +37,25 @@ const reportState = {
   editingId: '',
   readonly: false,
   loading: false,
-  initialized: false
+  initialized: false,
+  liveUnsubscribe: null,
+  formBaseline: ''
 };
 
 function $(id) { return document.getElementById(id); }
+function notifyBusinessEvent(eventType, resourceId) {
+  const api = window.YTE_NOTIFICATIONS;
+  if (!api || typeof api.notifyBusinessEvent !== 'function') return;
+  void api.notifyBusinessEvent(eventType, resourceId);
+}
+async function confirmInApp(options) {
+  const ui = window.YTE_APP_UI;
+  if (!ui || typeof ui.confirm !== 'function') {
+    showToast('Không mở được cửa sổ xác nhận. Vui lòng thử lại.', 'err');
+    return false;
+  }
+  return ui.confirm(options || {});
+}
 function esc(value) {
   return String(value == null ? '' : value)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -51,13 +67,46 @@ function normalizeSearch(value) {
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/đ/g, 'd').replace(/\s+/g, ' ');
 }
+function formatPersonName(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').split(' ').filter(Boolean).map((word) => {
+    const lower = word.toLocaleLowerCase('vi-VN');
+    return lower.charAt(0).toLocaleUpperCase('vi-VN') + lower.slice(1);
+  }).join(' ');
+}
+function normalizeBHYT(value) { return String(value || '').toUpperCase().replace(/\s+/g, '').trim().slice(0, 40); }
+function validBirthYear(value) {
+  const year = Number(value || 0);
+  return Number.isInteger(year) && year >= 1900 && year <= new Date().getFullYear();
+}
+async function preferredDisplayName(user, fallback) {
+  if (!user) return String(fallback || '—');
+  try {
+    const snap = await get(ref(db, `${YTE_APP_ROOT}/tenHienThi/${user.uid}`));
+    const custom = snap.exists() ? String(snap.child('displayName').val() || '').trim() : '';
+    return String(custom || fallback || user.displayName || user.email || '—').slice(0, 150);
+  } catch (_) {
+    return String(fallback || user.displayName || user.email || '—').slice(0, 150);
+  }
+}
+async function preferredDisplayNameByUid(uid, fallback) {
+  if (!uid) return String(fallback || '—');
+  try {
+    const snap = await get(ref(db, `${YTE_APP_ROOT}/tenHienThi/${uid}`));
+    const custom = snap.exists() ? String(snap.child('displayName').val() || '').trim() : '';
+    return String(custom || fallback || '—').slice(0, 150);
+  } catch (_) { return String(fallback || '—').slice(0, 150); }
+}
+function reportFormSignature() {
+  return ['reportPatientName','reportGender','reportBirthYear','reportBHYT','reportAddress','reportCause','reportDeathDate','reportNote'].map((id) => `${id}:${String($(id)?.value || '')}`).join('|');
+}
+function isReportDirty() { return !!reportState.formBaseline && !reportState.readonly && reportFormSignature() !== reportState.formBaseline; }
 function todayIso() {
-  const d = new Date();
-  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  const part = (type) => parts.find((item) => item.type === type)?.value || '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
 }
 function firstDayOfMonthIso() {
-  const d = new Date();
-  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-01';
+  return `${todayIso().slice(0, 7)}-01`;
 }
 function fmtDate(value) {
   const p = String(value || '').split('-');
@@ -74,7 +123,7 @@ function fmtDateTime(value) {
 }
 function monthKey(dateIso) { return String(dateIso || todayIso()).slice(0, 7); }
 function roleLabel(role) {
-  return role === 'admin' ? 'Quản trị' : role === 'nhaplieu' ? 'Nhập liệu' : role === 'viewer' ? 'Chỉ xem' : 'Chưa cấp';
+  return role === 'admin' ? 'Quản trị' : role === 'nhaplieu' ? 'Nhập liệu' : role === 'viewer' ? 'Xem' : 'Chưa cấp';
 }
 function typeLabel(type) { return type === 'TU_VONG' ? 'Tử vong' : 'Chuyển viện'; }
 function isOwner(user) { return !!(user && normalizeEmail(user.email) === OWNER_EMAIL); }
@@ -168,6 +217,14 @@ async function refreshAccess() {
   updateModuleUi();
 }
 
+function friendlyGivenName(value) {
+  let text = String(value || '').trim().replace(/\s+/g, ' ');
+  if (!text) return 'bạn';
+  if (text.includes('@')) text = text.split('@')[0].replace(/[._-]+/g, ' ').trim();
+  const parts = text.split(' ').filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : 'bạn';
+}
+
 function updateModuleUi(external) {
   if (external && external.authUser && !reportState.user) {
     reportState.user = auth.currentUser || null;
@@ -183,7 +240,6 @@ function updateModuleUi(external) {
       ['admin', 'nhaplieu'].includes(reportState.tongHopPermission.role));
   const reportActive = validPermission(reportState.permission);
 
-  if ($('navHome')) $('navHome').hidden = true;
   if ($('navReports')) $('navReports').hidden = !reportActive;
   if ($('moduleTongHopCard')) $('moduleTongHopCard').hidden = !tongHopActive;
   if ($('moduleReportCard')) $('moduleReportCard').hidden = !reportActive;
@@ -192,12 +248,12 @@ function updateModuleUi(external) {
   const user = reportState.user || auth.currentUser;
   if ($('homeWelcome')) {
     $('homeWelcome').textContent = user
-      ? 'Xin chào, ' + String(user.displayName || user.email || '')
+      ? 'Xin chào, ' + friendlyGivenName(user.displayName || user.email || '') + ' 👋'
       : 'Chọn chức năng';
   }
 
   if ($('reportPermissionModeBtn')) $('reportPermissionModeBtn').hidden = true;
-  if ($('btnNewReport')) $('btnNewReport').hidden = !canEditReport();
+  if ($('btnNewReport')) $('btnNewReport').hidden = true;
 }
 
 async function routeAfterLogin(result) {
@@ -247,7 +303,12 @@ window.YTE_REPORTS = {
   updateModuleUi,
   onLogout,
   onViewChanged,
-  refreshAccess
+  refreshAccess,
+  openCenterDeathForm,
+  openReportById,
+  editReportById,
+  deleteReportById: softDeleteReport,
+  hasUnsavedChanges: isReportDirty
 };
 
 function reportFilterValues() {
@@ -263,30 +324,48 @@ function reportFilterValues() {
   };
 }
 
+function applyReportSnapshot(snap) {
+  const raw = snapshotObject(snap);
+  reportState.reports = Object.keys(raw).map((id) => ({ id, ...(raw[id] || {}) }));
+  renderReports();
+  showInlineState('reportLoadState', '', '', false);
+}
+
+function stopReportRealtime() {
+  if (typeof reportState.liveUnsubscribe === 'function') reportState.liveUnsubscribe();
+  reportState.liveUnsubscribe = null;
+}
+
+function startReportRealtime() {
+  if (!validPermission(reportState.permission) && !isOwner(reportState.user)) {
+    stopReportRealtime();
+    return;
+  }
+  if (reportState.liveUnsubscribe) return;
+  reportState.liveUnsubscribe = onValue(ref(db, `${REPORT_ROOT}/baoCao`), (snap) => {
+    applyReportSnapshot(snap);
+  }, (error) => {
+    console.error('Realtime báo cáo:', error);
+    showInlineState('reportLoadState', 'Mất kết nối đồng bộ trực tiếp. Ứng dụng sẽ tự kết nối lại khi mạng ổn định.', 'err', false);
+  });
+}
+
 async function loadReports(force) {
-  if (!validPermission(reportState.permission)) {
+  if (!validPermission(reportState.permission) && !isOwner(reportState.user)) {
     $('reportList').innerHTML = '<div class="empty">Tài khoản chưa được cấp quyền Báo cáo.</div>';
     return;
   }
+  startReportRealtime();
+  if (!force && reportState.reports.length) { renderReports(); return; }
   if (reportState.loading && !force) return;
-  let filter;
-  try { filter = reportFilterValues(); }
+  try { reportFilterValues(); }
   catch (error) { showInlineState('reportLoadState', error.message, 'err', false); return; }
 
   reportState.loading = true;
   showInlineState('reportLoadState', 'Đang tải báo cáo...', '', true);
   try {
-    const q = query(
-      ref(db, `${REPORT_ROOT}/baoCao`),
-      orderByChild('ngayBaoCao'),
-      startAt(filter.from),
-      endAt(filter.to + '\uf8ff')
-    );
-    const snap = await get(q);
-    const raw = snapshotObject(snap);
-    reportState.reports = Object.keys(raw).map((id) => ({ id, ...(raw[id] || {}) }));
-    renderReports();
-    showInlineState('reportLoadState', '', '', false);
+    const snap = await get(ref(db, `${REPORT_ROOT}/baoCao`));
+    applyReportSnapshot(snap);
   } catch (error) {
     console.error(error);
     showInlineState('reportLoadState', error.message || String(error), 'err', false);
@@ -300,6 +379,7 @@ function filteredReports() {
   const filter = reportFilterValues();
   return reportState.reports
     .filter((item) => item.trangThai !== 'deleted')
+    .filter((item) => String(item.ngayBaoCao || '') >= filter.from && String(item.ngayBaoCao || '') <= filter.to)
     .filter((item) => item.loaiBaoCao === filter.type)
     .filter((item) => {
       if (!filter.search) return true;
@@ -320,7 +400,6 @@ function renderReports() {
 
   const allActive = reportState.reports.filter((item) => item.trangThai !== 'deleted');
   $('reportFilteredCount').textContent = String(rows.length);
-  $('reportTransferCount').textContent = String(allActive.filter((item) => item.loaiBaoCao === 'CHUYEN_VIEN').length);
   $('reportDeathCount').textContent = String(allActive.filter((item) => item.loaiBaoCao === 'TU_VONG').length);
 
   if (!rows.length) {
@@ -343,7 +422,7 @@ function renderReports() {
         </div>
         <div class="report-row-meta">
           <span>${esc(item.gioiTinh || '—')}</span>
-          <span>${esc(item.namSinh || '—')}</span>
+          <span>${item.namSinh ? `Sinh năm ${esc(item.namSinh)}` : '—'}</span>
           <span>${esc(fmtDate(item.ngayBaoCao))}</span>
           <span>${esc(destination)}</span>
         </div>
@@ -361,10 +440,25 @@ function renderReports() {
 
 function setReportType(type) {
   reportState.type = type === 'TU_VONG' ? 'TU_VONG' : 'CHUYEN_VIEN';
+  const isTransfer = reportState.type === 'CHUYEN_VIEN';
   document.querySelectorAll('.report-type-tab').forEach((tab) => {
     tab.classList.toggle('active', tab.getAttribute('data-report-type') === reportState.type);
   });
-  renderReports();
+  if ($('transferJourneyPanel')) $('transferJourneyPanel').hidden = !isTransfer;
+  if ($('reportListPanel')) $('reportListPanel').hidden = isTransfer;
+  if ($('reportPermissionPanel')) $('reportPermissionPanel').hidden = true;
+  if ($('reportModeRow')) $('reportModeRow').hidden = true;
+  if ($('btnNewReport')) $('btnNewReport').hidden = true;
+  if ($('reportPageTitle')) $('reportPageTitle').textContent = isTransfer ? 'Chuyển viện & tử vong' : 'Tử vong tại Trung tâm';
+  if ($('reportPageSubtitle')) $('reportPageSubtitle').textContent = isTransfer
+    ? 'Theo dõi hành trình, lượt chuyển viện và tử vong.'
+    : 'Ghi nhận tử vong tại Trung tâm.';
+  if (isTransfer) {
+    if (window.YTE_JOURNEYS && typeof window.YTE_JOURNEYS.setVisible === 'function') window.YTE_JOURNEYS.setVisible(true);
+  } else {
+    if (window.YTE_JOURNEYS && typeof window.YTE_JOURNEYS.setVisible === 'function') window.YTE_JOURNEYS.setVisible(false);
+    loadReports(false);
+  }
 }
 
 function setReportMode(mode) {
@@ -380,7 +474,7 @@ function setReportMode(mode) {
 
 async function activateReportsView() {
   await refreshAccess();
-  if (!validPermission(reportState.permission)) {
+  if (!validPermission(reportState.permission) && !isOwner(reportState.user)) {
     activateView('home');
     return;
   }
@@ -388,7 +482,12 @@ async function activateReportsView() {
   $('reportToDate').value = $('reportToDate').value || todayIso();
   $('reportPermissionModeBtn').hidden = true;
   if (!canAdminReport() && reportState.mode === 'permissions') setReportMode('list');
-  await loadReports(false);
+  setReportType(reportState.type);
+  if (reportState.type === 'CHUYEN_VIEN' && window.YTE_JOURNEYS && typeof window.YTE_JOURNEYS.activate === 'function') {
+    await window.YTE_JOURNEYS.activate();
+  } else if (reportState.type === 'TU_VONG') {
+    await loadReports(false);
+  }
 }
 
 function resetReportForm(type) {
@@ -398,6 +497,7 @@ function resetReportForm(type) {
   $('reportPatientName').value = '';
   $('reportGender').value = '';
   $('reportBirthYear').value = '';
+  if ($('reportBHYT')) $('reportBHYT').value = '';
   $('reportAddress').value = 'TTBTXH TÂN HIỆP';
   $('reportDiagnosis').value = '';
   $('reportTransferDate').value = todayIso();
@@ -405,10 +505,11 @@ function resetReportForm(type) {
   $('reportTransferTo').value = '';
   $('reportCause').value = '';
   $('reportDeathDate').value = todayIso();
-  $('reportDeathPlace').value = '';
+  $('reportDeathPlace').value = 'Trung tâm Bảo trợ xã hội Tân Hiệp';
   $('reportNote').value = '';
   $('reportFormError').textContent = '';
   updateReportFormKind();
+  reportState.formBaseline = reportFormSignature();
 }
 
 function updateReportFormKind() {
@@ -420,21 +521,47 @@ function updateReportFormKind() {
 
 function setReportFormReadonly(readonly) {
   reportState.readonly = !!readonly;
-  const fields = $('reportLayer').querySelectorAll('input, select, textarea');
-  fields.forEach((field) => { field.disabled = !!readonly; });
-  $('reportSave').hidden = !!readonly;
-  $('reportCancel').textContent = readonly ? 'Đóng' : 'Quay lại';
+  const layer = $('reportLayer');
+  if (layer) layer.classList.toggle('is-readonly', reportState.readonly);
+  const detail = $('reportReadonlyView'); if (detail) detail.hidden = !reportState.readonly;
+  const fields = layer ? layer.querySelectorAll('input, select, textarea') : []; fields.forEach((field) => { field.disabled = !!readonly; });
+  $('reportSave').hidden = !!readonly; $('reportCancel').textContent = readonly ? 'Đóng' : 'Quay lại';
+  // Readonly popup đã có nút Đóng ở footer: không hiển thị thêm dấu X.
+  if ($('reportCloseX')) $('reportCloseX').hidden = !!readonly;
+}
+function populateReadonlyReportDetails(item) {
+  if (!$('reportReadonlyView')) return;
+  const facts=[item.gioiTinh||'',item.namSinh?`Sinh năm ${item.namSinh}`:'',item.theBHYT?`BHYT ${item.theBHYT}`:''].filter(Boolean);
+  $('reportDetailName').textContent=item.hoTenBenhNhan||'Chưa có họ tên';$('reportDetailFacts').textContent=facts.length?facts.join(' · '):'Chưa có thông tin nhân thân';
+  $('reportDetailDate').textContent=fmtDate(item.ngayTuVong||item.ngayBaoCao||'');$('reportDetailPlace').textContent=item.noiTuVong||'Trung tâm Bảo trợ xã hội Tân Hiệp';$('reportDetailAddress').textContent=item.diaChi||'—';$('reportDetailCause').textContent=item.nguyenNhan||'—';
+  const note=String(item.ghiChu||'').trim();$('reportDetailNote').textContent=note||'—';$('reportDetailNoteRow').hidden=!note;$('reportDetailReporter').textContent=item.createdByName||item.legacyNguoiNhap||'—';
+  preferredDisplayNameByUid(item.createdByUid,item.createdByName||item.legacyNguoiNhap||'—').then((name)=>{if(reportState.editingId===item.id&&$('reportDetailReporter'))$('reportDetailReporter').textContent=name;});
 }
 
-function openNewReport() {
+async function openCenterDeathForm() {
   if (!canEditReport()) return;
-  resetReportForm(reportState.type);
-  $('reportDialogTitle').textContent = 'Lập báo cáo ' + typeLabel(reportState.type).toLowerCase();
-  $('reportReporter').textContent = String(reportState.user?.displayName || reportState.user?.email || '');
+  reportState.type = 'TU_VONG';
+  resetReportForm('TU_VONG');
+  $('reportDialogTitle').textContent = 'Ghi nhận tử vong tại Trung tâm';
+  $('reportDialogBadge').textContent = 'TỬ VONG TẠI TRUNG TÂM';
+  $('reportReporter').textContent = await preferredDisplayName(reportState.user || auth.currentUser, reportState.permission && reportState.permission.displayName);
   setReportFormReadonly(false);
+  reportState.formBaseline = reportFormSignature();
   $('reportLayer').hidden = false;
   document.body.style.overflow = 'hidden';
   setTimeout(() => $('reportPatientName').focus(), 0);
+}
+function openNewReport() { return openCenterDeathForm(); }
+function openReportById(id) {
+  const item = reportState.reports.find((row) => row.id === id);
+  if (!item) return;
+  populateReportForm(item, true);
+}
+function editReportById(id) {
+  if (!canEditReport()) return;
+  const item = reportState.reports.find((row) => row.id === id);
+  if (!item || item.trangThai === 'deleted') return;
+  populateReportForm(item, false);
 }
 
 function populateReportForm(item, readonly) {
@@ -444,6 +571,7 @@ function populateReportForm(item, readonly) {
   $('reportPatientName').value = item.hoTenBenhNhan || '';
   $('reportGender').value = item.gioiTinh || '';
   $('reportBirthYear').value = item.namSinh || '';
+  if ($('reportBHYT')) $('reportBHYT').value = item.theBHYT || '';
   $('reportAddress').value = item.diaChi || '';
   $('reportDiagnosis').value = item.chanDoan || '';
   $('reportTransferDate').value = item.ngayChuyenVien || item.ngayBaoCao || '';
@@ -454,30 +582,45 @@ function populateReportForm(item, readonly) {
   $('reportDeathPlace').value = item.noiTuVong || '';
   $('reportNote').value = item.ghiChu || '';
   $('reportReporter').textContent = item.createdByName || item.legacyNguoiNhap || '—';
-  $('reportDialogTitle').textContent = (readonly ? 'Chi tiết ' : 'Chỉnh sửa ') + typeLabel(reportState.type).toLowerCase();
+  preferredDisplayNameByUid(item.createdByUid, item.createdByName || item.legacyNguoiNhap || '—').then((name) => { if (reportState.editingId === item.id && $('reportReporter')) $('reportReporter').textContent = name; });
+  if (readonly) populateReadonlyReportDetails(item);
+  $('reportDialogTitle').textContent = reportState.type === 'TU_VONG' ? ((readonly ? 'Chi tiết' : 'Chỉnh sửa') + ' tử vong tại Trung tâm') : ((readonly ? 'Chi tiết ' : 'Chỉnh sửa ') + typeLabel(reportState.type).toLowerCase());
   $('reportFormError').textContent = '';
   setReportFormReadonly(readonly);
   $('reportLayer').hidden = false;
   document.body.style.overflow = 'hidden';
+  reportState.formBaseline = reportFormSignature();
 }
 
-function closeReportForm() {
+async function closeReportForm(force = false) {
+  if (!force && isReportDirty()) {
+    const discard = await confirmInApp({title:'Bỏ thay đổi chưa lưu?',message:'Bạn có thay đổi chưa lưu. Nếu tiếp tục, nội dung đang nhập sẽ bị bỏ.',confirmText:'Bỏ thay đổi',cancelText:'Tiếp tục nhập',danger:true});
+    if (!discard) return false;
+  }
   $('reportLayer').hidden = true;
   document.body.style.overflow = '';
   reportState.editingId = '';
   reportState.readonly = false;
+  reportState.formBaseline = '';
   $('reportFormError').textContent = '';
+  reportState.type = 'CHUYEN_VIEN';
+  if ($('transferJourneyPanel')) $('transferJourneyPanel').hidden = false;
+  if ($('reportListPanel')) $('reportListPanel').hidden = true;
+  if ($('reportPageTitle')) $('reportPageTitle').textContent = 'Chuyển viện & tử vong';
+  if ($('reportPageSubtitle')) $('reportPageSubtitle').textContent = 'Theo dõi hành trình, lượt chuyển viện và tử vong.';
+  return true;
 }
 
 function reportPayload() {
-  const name = String($('reportPatientName').value || '').trim();
+  const name = formatPersonName($('reportPatientName').value || '');
   const gender = $('reportGender').value;
   const birth = String($('reportBirthYear').value || '').trim();
+  const bhyt = normalizeBHYT($('reportBHYT')?.value || '');
   const address = String($('reportAddress').value || '').trim();
   const note = String($('reportNote').value || '').trim();
   if (name.length < 2) throw new Error('Vui lòng nhập họ tên bệnh nhân.');
   if (!['Nam', 'Nữ'].includes(gender)) throw new Error('Vui lòng chọn giới tính.');
-  if (birth.length > 50) throw new Error('Năm sinh / ngày sinh quá dài.');
+  if (!validBirthYear(birth)) throw new Error(`Năm sinh phải từ 1900 đến ${new Date().getFullYear()}.`);
   if (address.length > 300) throw new Error('Địa chỉ quá dài.');
 
   const common = {
@@ -485,6 +628,7 @@ function reportPayload() {
     hoTenNorm: normalizeSearch(name),
     gioiTinh: gender,
     namSinh: birth,
+    theBHYT: bhyt,
     diaChi: address,
     ghiChu: note
   };
@@ -511,7 +655,7 @@ function reportPayload() {
 
   const cause = String($('reportCause').value || '').trim();
   const date = $('reportDeathDate').value;
-  const place = String($('reportDeathPlace').value || '').trim();
+  const place = 'Trung tâm Bảo trợ xã hội Tân Hiệp';
   if (!cause) throw new Error('Vui lòng nhập nguyên nhân tử vong.');
   if (!date) throw new Error('Vui lòng chọn ngày tử vong.');
   if (!place) throw new Error('Vui lòng nhập nơi tử vong.');
@@ -523,6 +667,56 @@ function reportPayload() {
     ngayTuVong: date,
     noiTuVong: place
   };
+}
+
+function comparePatientIdentity(source, payload) {
+  const sourceName = normalizeSearch(source.doiTuongNorm || source.doiTuong || source.hoTenNorm || source.hoTenBenhNhan || '');
+  const payloadName = normalizeSearch(payload.hoTenNorm || payload.hoTenBenhNhan || '');
+  const sourceGender = String(source.gioiTinh || '');
+  const payloadGender = String(payload.gioiTinh || '');
+  const sourceYear = Number(source.namSinh || 0);
+  const payloadYear = Number(payload.namSinh || 0);
+  const sourceBhyt = normalizeBHYT(source.theBHYTNorm || source.theBHYT || '');
+  const payloadBhyt = normalizeBHYT(payload.theBHYT || '');
+  const sameProfile = sourceName === payloadName && sourceGender === payloadGender && sourceYear === payloadYear;
+
+  if (sourceBhyt && payloadBhyt && sourceBhyt === payloadBhyt && !sameProfile) {
+    return { match: false, conflict: true, reason: 'Mã BHYT này đang gắn với họ tên/giới tính/năm sinh khác. Vui lòng kiểm tra lại thông tin.' };
+  }
+  if (sameProfile && sourceBhyt && payloadBhyt && sourceBhyt !== payloadBhyt) {
+    return { match: false, conflict: true, reason: 'Đối tượng cùng họ tên, giới tính và năm sinh đang có mã BHYT khác. Vui lòng kiểm tra lại trước khi ghi nhận.' };
+  }
+  if (!sameProfile) return { match: false, conflict: false };
+  if (!sourceBhyt || !payloadBhyt || sourceBhyt === payloadBhyt) return { match: true, conflict: false };
+  return { match: false, conflict: false };
+}
+
+async function findJourneyConflict(payload) {
+  const snap = await get(ref(db, `${REPORT_ROOT}/hanhTrinhChuyenVien`));
+  const raw = snapshotObject(snap);
+  for (const id of Object.keys(raw)) {
+    const info = raw[id] && raw[id].thongTin ? raw[id].thongTin : {};
+    const identity = comparePatientIdentity(info, payload);
+    if (identity.conflict) throw new Error(identity.reason);
+    if (!identity.match) continue;
+    if (info.trangThaiKyThuat === 'OPEN') return { kind: 'OPEN', info };
+    if (info.trangThaiHienTai === 'TU_VONG_TAI_BENH_VIEN') return { kind: 'HOSPITAL_DEATH', info };
+  }
+  return null;
+}
+
+async function findCenterDeathDuplicate(payload, excludeId) {
+  const snap = await get(ref(db, `${REPORT_ROOT}/baoCao`));
+  const raw = snapshotObject(snap);
+  for (const id of Object.keys(raw)) {
+    const item = { id, ...(raw[id] || {}) };
+    if (!item || item.id === excludeId || item.trangThai === 'deleted' || item.loaiBaoCao !== 'TU_VONG') continue;
+    if (!(item.source === 'CENTER_DEATH' || normalizeSearch(item.noiTuVong) === normalizeSearch('Trung tâm Bảo trợ xã hội Tân Hiệp'))) continue;
+    const identity = comparePatientIdentity(item, payload);
+    if (identity.conflict) throw new Error(identity.reason);
+    if (identity.match) return item;
+  }
+  return null;
 }
 
 async function saveReport() {
@@ -541,8 +735,22 @@ async function saveReport() {
       : null;
     if (existing && existing.trangThai === 'deleted') throw new Error('Báo cáo đã bị xóa và không thể chỉnh sửa.');
 
+    if (payload.loaiBaoCao === 'TU_VONG') {
+      const journeyConflict = await findJourneyConflict(payload);
+      if (journeyConflict && journeyConflict.kind === 'OPEN') {
+        throw new Error(`Đối tượng đang có hành trình ngoài Trung tâm tại ${journeyConflict.info.noiHienTai || 'cơ sở y tế'}. Nếu tử vong trong quá trình chuyển viện, hãy cập nhật trạng thái Tử vong tại bệnh viện trên hành trình đó.`);
+      }
+      if (journeyConflict && journeyConflict.kind === 'HOSPITAL_DEATH') {
+        throw new Error('Đối tượng đã được ghi nhận tử vong tại bệnh viện trong một hành trình chuyển viện. Không tạo thêm tử vong tại Trung tâm để tránh đếm trùng.');
+      }
+      const duplicateDeath = await findCenterDeathDuplicate(payload, existing && existing.id);
+      if (duplicateDeath) {
+        throw new Error(`Đối tượng đã có bản ghi tử vong tại Trung tâm ngày ${fmtDate(duplicateDeath.ngayBaoCao || duplicateDeath.ngayTuVong || '')}. Vui lòng mở bản ghi hiện có để chỉnh sửa thay vì tạo thêm.`);
+      }
+    }
     const now = Date.now();
     const generated = reportState.editingId || ((payload.loaiBaoCao === 'TU_VONG' ? 'TV_' : 'CV_') + push(ref(db, `${REPORT_ROOT}/baoCao`)).key);
+    const displayName = await preferredDisplayName(user, reportState.permission && reportState.permission.displayName);
     const record = {
       ...payload,
       id: generated,
@@ -551,12 +759,14 @@ async function saveReport() {
       createdAt: existing ? Number(existing.createdAt || now) : now,
       createdByUid: existing ? String(existing.createdByUid || user.uid) : user.uid,
       createdByEmail: existing ? String(existing.createdByEmail || normalizeEmail(user.email)) : normalizeEmail(user.email),
-      createdByName: existing ? String(existing.createdByName || user.displayName || user.email || '') : String(user.displayName || user.email || ''),
+      createdByName: existing ? String(existing.createdByName || displayName) : displayName,
       updatedAt: now,
       updatedByUid: user.uid,
       updatedByEmail: normalizeEmail(user.email),
-      updatedByName: String(user.displayName || user.email || ''),
-      source: existing ? String(existing.source || 'APP') : 'APP'
+      updatedByName: displayName,
+      source: payload.loaiBaoCao === 'TU_VONG' && normalizeSearch(payload.noiTuVong) === normalizeSearch('Trung tâm Bảo trợ xã hội Tân Hiệp')
+        ? 'CENTER_DEATH'
+        : (existing ? String(existing.source || 'APP') : 'APP')
     };
 
     const historyId = push(ref(db, `${REPORT_ROOT}/lichSu/${generated}`)).key;
@@ -571,7 +781,7 @@ async function saveReport() {
       afterJson: JSON.stringify(record),
       uid: user.uid,
       email: normalizeEmail(user.email),
-      displayName: String(user.displayName || user.email || ''),
+      displayName,
       role: reportState.permission.role,
       createdAt: now
     };
@@ -583,14 +793,22 @@ async function saveReport() {
       dataDate: record.ngayBaoCao,
       uid: user.uid,
       email: normalizeEmail(user.email),
-      displayName: String(user.displayName || user.email || ''),
+      displayName,
       role: reportState.permission.role,
       createdAt: now
     };
+    if (record.loaiBaoCao === 'TU_VONG' && record.source === 'CENTER_DEATH') {
+      if (existing && existing.ngayBaoCao && existing.ngayBaoCao !== record.ngayBaoCao) updates[`${REPORT_ROOT}/congKhaiThongKe/tuVongTheoNgay/${existing.ngayBaoCao}/CENTER_${generated}`] = null;
+      updates[`${REPORT_ROOT}/congKhaiThongKe/tuVongTheoNgay/${record.ngayBaoCao}/CENTER_${generated}`] = true;
+    }
     await update(ref(db), updates);
-    closeReportForm();
+    if (!existing && record.loaiBaoCao === 'TU_VONG' && record.source === 'CENTER_DEATH') {
+      notifyBusinessEvent('DEATH_CENTER', generated);
+    }
+    closeReportForm(true);
     showToast(existing ? 'Đã cập nhật báo cáo.' : 'Đã lưu báo cáo.', 'ok');
     await loadReports(true);
+    if (window.YTE_JOURNEYS && typeof window.YTE_JOURNEYS.setSubView === 'function') window.YTE_JOURNEYS.setSubView('history');
   } catch (error) {
     console.error(error);
     $('reportFormError').textContent = error.message || String(error);
@@ -604,19 +822,27 @@ async function softDeleteReport(id) {
   if (!canAdminReport()) return;
   const item = reportState.reports.find((row) => row.id === id);
   if (!item) return;
-  if (!window.confirm(`Xóa báo cáo ${typeLabel(item.loaiBaoCao)} của ${item.hoTenBenhNhan}? Dữ liệu sẽ được xóa mềm và vẫn còn trong lịch sử.`)) return;
+  const confirmed = await confirmInApp({
+    title: `Xóa báo cáo ${typeLabel(item.loaiBaoCao)}?`,
+    message: `Bạn có chắc muốn xóa báo cáo của ${item.hoTenBenhNhan || 'đối tượng'}? Báo cáo sẽ rời danh sách chính nhưng vẫn được lưu trong lịch sử quản trị.`,
+    confirmText: 'Xóa báo cáo',
+    cancelText: 'Hủy',
+    danger: true
+  });
+  if (!confirmed) return;
   const user = auth.currentUser;
   const now = Date.now();
+  const displayName = await preferredDisplayName(user, reportState.permission && reportState.permission.displayName);
   const record = {
     ...item,
     trangThai: 'deleted',
     deletedAt: now,
     deletedByUid: user.uid,
-    deletedByName: String(user.displayName || user.email || ''),
+    deletedByName: displayName,
     updatedAt: now,
     updatedByUid: user.uid,
     updatedByEmail: normalizeEmail(user.email),
-    updatedByName: String(user.displayName || user.email || ''),
+    updatedByName: displayName,
     version: Number(item.version || 0) + 1
   };
   const historyId = push(ref(db, `${REPORT_ROOT}/lichSu/${id}`)).key;
@@ -631,7 +857,7 @@ async function softDeleteReport(id) {
     afterJson: JSON.stringify(record),
     uid: user.uid,
     email: normalizeEmail(user.email),
-    displayName: String(user.displayName || user.email || ''),
+    displayName,
     role: reportState.permission.role,
     createdAt: now
   };
@@ -643,11 +869,17 @@ async function softDeleteReport(id) {
     dataDate: item.ngayBaoCao,
     uid: user.uid,
     email: normalizeEmail(user.email),
-    displayName: String(user.displayName || user.email || ''),
+    displayName,
     role: reportState.permission.role,
     createdAt: now
   };
+  if (item.loaiBaoCao === 'TU_VONG' && (item.source === 'CENTER_DEATH' || normalizeSearch(item.noiTuVong) === normalizeSearch('Trung tâm Bảo trợ xã hội Tân Hiệp'))) {
+    updates[`${REPORT_ROOT}/congKhaiThongKe/tuVongTheoNgay/${item.ngayBaoCao}/CENTER_${id}`] = null;
+  }
   await update(ref(db), updates);
+  if (item.loaiBaoCao === 'TU_VONG' && (item.source === 'CENTER_DEATH' || normalizeSearch(item.noiTuVong) === normalizeSearch('Trung tâm Bảo trợ xã hội Tân Hiệp'))) {
+    notifyBusinessEvent('DEATH_CENTER_DELETED', id);
+  }
   showToast('Đã xóa báo cáo khỏi danh sách.', 'ok');
   await loadReports(true);
 }
@@ -698,11 +930,13 @@ function renderReportUsers() {
       const isSelf = item.uid === currentUid;
       let actions = '';
       if (!item.role || !item.active) {
+        actions += `<button class="small-btn btn-soft report-user-action" data-kind="grant-viewer" data-id="${esc(item.uid)}">Cấp Xem</button>`;
         actions += `<button class="small-btn btn-soft report-user-action" data-kind="grant-entry" data-id="${esc(item.uid)}">Cấp Nhập liệu</button>`;
         actions += `<button class="small-btn btn-primary report-user-action" data-kind="grant-admin" data-id="${esc(item.uid)}">Cấp Quản trị</button>`;
       } else {
-        const nextRole = item.role === 'admin' ? 'nhaplieu' : 'admin';
-        actions += `<button class="small-btn btn-soft report-user-action" data-kind="role" data-value="${nextRole}" data-id="${esc(item.uid)}"${isSelf ? ' disabled' : ''}>${item.role === 'admin' ? 'Hạ quyền' : 'Cấp quản trị'}</button>`;
+        if (item.role !== 'viewer') actions += `<button class="small-btn btn-soft report-user-action" data-kind="role" data-value="viewer" data-id="${esc(item.uid)}"${isSelf ? ' disabled' : ''}>Cấp Xem</button>`;
+        if (item.role !== 'nhaplieu') actions += `<button class="small-btn btn-soft report-user-action" data-kind="role" data-value="nhaplieu" data-id="${esc(item.uid)}"${isSelf ? ' disabled' : ''}>Cấp Nhập liệu</button>`;
+        if (item.role !== 'admin') actions += `<button class="small-btn btn-soft report-user-action" data-kind="role" data-value="admin" data-id="${esc(item.uid)}"${isSelf ? ' disabled' : ''}>Cấp Quản trị</button>`;
         actions += `<button class="small-btn btn-danger report-user-action" data-kind="revoke" data-id="${esc(item.uid)}"${isSelf ? ' disabled' : ''}>Thu hồi</button>`;
       }
       return `<tr>
@@ -783,8 +1017,8 @@ function initEvents() {
     }
   });
 
-  $('reportCancel').addEventListener('click', closeReportForm);
-  $('reportCloseX').addEventListener('click', closeReportForm);
+  $('reportCancel').addEventListener('click', () => closeReportForm(false));
+  $('reportCloseX').addEventListener('click', () => closeReportForm(false));
   $('reportSave').addEventListener('click', saveReport);
   $('reportLayer').addEventListener('click', (event) => { if (event.target === $('reportLayer')) closeReportForm(); });
 
@@ -797,6 +1031,7 @@ function initEvents() {
     const kind = button.getAttribute('data-kind');
     const value = button.getAttribute('data-value');
     try {
+      if (kind === 'grant-viewer') await setReportUserPermission(uid, 'viewer', true);
       if (kind === 'grant-entry') await setReportUserPermission(uid, 'nhaplieu', true);
       if (kind === 'grant-admin') await setReportUserPermission(uid, 'admin', true);
       if (kind === 'role') await setReportUserPermission(uid, value, true);
@@ -809,6 +1044,12 @@ function initEvents() {
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && !$('reportLayer').hidden) closeReportForm();
   });
+  window.addEventListener('beforeunload', (event) => {
+    if (!isReportDirty()) return;
+    event.preventDefault();
+    event.returnValue = '';
+  });
+  setReportType(reportState.type);
 }
 
 function start() {
@@ -816,6 +1057,7 @@ function start() {
   onAuthStateChanged(auth, async (user) => {
     reportState.user = user || null;
     if (!user) {
+      stopReportRealtime();
       reportState.permission = null;
       reportState.tongHopPermission = null;
       updateModuleUi();
@@ -823,6 +1065,7 @@ function start() {
     }
     try {
       await refreshAccess();
+      startReportRealtime();
     } catch (error) {
       console.error('Không thể nạp quyền Báo cáo:', error);
     }
