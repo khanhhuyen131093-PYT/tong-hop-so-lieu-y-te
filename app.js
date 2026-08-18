@@ -84,7 +84,7 @@ function markerCount(raw, kind) {
   return Object.keys(raw || {}).filter((key) => {
     const active = raw[key] === true || raw[key] === 1 || raw[key] === '1';
     if (!active) return false;
-    // Nghiệp vụ tử vong tại Trung tâm đã ngừng sử dụng từ v9.8.4.
+    // Nghiệp vụ tử vong tại Trung tâm đã ngừng sử dụng từ v9.8.5.
     // Giữ dữ liệu legacy trong Firebase nhưng không đưa CENTER_* vào số liệu tự động.
     if (kind === 'death' && /^CENTER_/i.test(String(key))) return false;
     return true;
@@ -2245,7 +2245,7 @@ var AUTO_SYNC_MS = 300000;
     }
 
     async function initializeUi(){
-      window.parent.postMessage({type:'YTE_APP_READY',version:'9.8.4'},'*');setupDates();updateRangeFields();
+      window.parent.postMessage({type:'YTE_APP_READY',version:'9.8.5'},'*');setupDates();updateRangeFields();
       document.querySelectorAll('.nav-item').forEach(function(button){button.addEventListener('click',function(){showView(button.getAttribute('data-view'))})});
       document.querySelectorAll('.admin-tab').forEach(function(tab){tab.addEventListener('click',function(){showAdminSection(tab.getAttribute('data-admin-tab'))})});
       $('btnAccount').onclick=function(){showView('auth')};$('btnTopLogout').onclick=logout;$('btnSync').onclick=function(){syncData(false)};$('btnApply').onclick=function(){syncData(false)};$('rangeType').onchange=function(){updateRangeFields()};$('contentFilter').onchange=renderAll;

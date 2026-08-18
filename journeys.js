@@ -745,7 +745,7 @@ function renderHistory() {
     const status = statusLabel(item.trangThaiHienTai);
     const statusClassName = statusClass(item.trangThaiHienTai);
     const bhxh = String(item.soBHXH || item.theBHXH || item.bhxh || item.theBHYT || '').trim();
-    return `<tr>`
+    return `<tr>
       <td class="history-col-stt" data-label="STT">${index + 1}</td>
       <td class="history-col-name" data-label="Họ và tên">
         <div class="history-name-row"><span class="history-mobile-field-label">Họ và tên:</span><strong>${esc(item.doiTuong || 'Chưa có tên')}</strong></div>

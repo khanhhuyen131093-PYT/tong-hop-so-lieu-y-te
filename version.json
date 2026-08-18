@@ -1,7 +1,7 @@
 {
-  "version": "9.8.4",
+  "version": "9.8.5",
   "releasedAt": "2026-08-18",
-  "title": "Pink UI + Device-managed Push Settings 9.8.4",
+  "title": "Pink UI + Device-managed Push Settings 9.8.5",
   "businessBaseline": "Business Stable v1.0",
   "message": "Giữ giao diện hồng và chữ xanh đen; sau khi Push đã bật thành công, ẩn khối thiết lập thông báo trong ứng dụng. Người dùng tắt/bật lại quyền Push qua Cài đặt của thiết bị hoặc trình duyệt."
 }
