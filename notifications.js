@@ -1,6 +1,6 @@
 /*
  * OneSignal Web Push + Notification Center
- * Runtime 9.8.2
+ * Runtime 9.8.4
  *
  * - One source supports two GitHub Pages origins using separate OneSignal App IDs.
  * - OneSignal worker uses a dedicated sub-scope so it does not replace the PWA worker.

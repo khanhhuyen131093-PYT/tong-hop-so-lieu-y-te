@@ -1,24 +1,24 @@
 'use strict';
 
-const APP_VERSION = '9.8.2';
+const APP_VERSION = '9.8.4';
 const CACHE_PREFIX = 'tong-hop-so-lieu-y-te-firebase-';
 const CACHE_NAME = CACHE_PREFIX + 'v' + APP_VERSION;
 const LEGACY_CACHE_NAMES = new Set(['yte-tan-hiep-v5']);
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css?v=9.8.2',
-  './reports.css?v=9.8.2',
-  './journeys.css?v=9.8.2',
-  './app-config.js?v=9.8.2',
-  './ui.js?v=9.8.2',
-  './update-manager.js?v=9.8.2',
-  './notifications.js?v=9.8.2',
-  './app.js?v=9.8.2',
+  './styles.css?v=9.8.4',
+  './reports.css?v=9.8.4',
+  './journeys.css?v=9.8.4',
+  './app-config.js?v=9.8.4',
+  './ui.js?v=9.8.4',
+  './update-manager.js?v=9.8.4',
+  './notifications.js?v=9.8.4',
+  './app.js?v=9.8.4',
   './report-preview.js',
   './excel-export.js',
-  './reports.js?v=9.8.2',
-  './journeys.js?v=9.8.2',
+  './reports.js?v=9.8.4',
+  './journeys.js?v=9.8.4',
   './version.json',
   './manifest.webmanifest',
   './offline.html',

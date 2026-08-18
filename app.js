@@ -80,8 +80,15 @@ function metricKindFromCategory(item) {
   if (['tu vong', 'luot tu vong', 'so tu vong', 'so luot tu vong'].includes(name) || ['TU_VONG', 'TUVONG'].includes(code)) return 'death';
   return '';
 }
-function markerCount(raw) {
-  return Object.keys(raw || {}).filter((key) => raw[key] === true || raw[key] === 1 || raw[key] === '1').length;
+function markerCount(raw, kind) {
+  return Object.keys(raw || {}).filter((key) => {
+    const active = raw[key] === true || raw[key] === 1 || raw[key] === '1';
+    if (!active) return false;
+    // Nghiệp vụ tử vong tại Trung tâm đã ngừng sử dụng từ v9.8.4.
+    // Giữ dữ liệu legacy trong Firebase nhưng không đưa CENTER_* vào số liệu tự động.
+    if (kind === 'death' && /^CENTER_/i.test(String(key))) return false;
+    return true;
+  }).length;
 }
 function derivedCategory(categories, kind) {
   return (categories || []).find((item) => metricKindFromCategory(item) === kind) || null;
@@ -92,7 +99,7 @@ function mergeDerivedDailyRecords(records, categories, date, transferRaw, deathR
   const death = derivedCategory(categories, 'death');
   function applyDerived(category, kind, raw) {
     if (!category) return;
-    const autoValue = markerCount(raw);
+    const autoValue = markerCount(raw, kind);
     const stored = map.get(category.code) || null;
     if (!stored && autoValue === 0) return;
     if (stored) {
@@ -137,7 +144,7 @@ function mergeDerivedRangeRecords(records, categories, transferByDate, deathByDa
   function applyDerived(date, category, kind, raw) {
     if (!category) return;
     const id = `${date}-${category.code}`;
-    const autoValue = markerCount(raw);
+    const autoValue = markerCount(raw, kind);
     const stored = map.get(id) || null;
     if (!stored && autoValue === 0) return;
     if (stored) {
@@ -617,7 +624,7 @@ async function adjustDailyDataFirebase(payload) {
   if (derivedKind) {
     const autoPath = derivedKind === 'transfer' ? 'chuyenVienTheoNgay' : 'tuVongTheoNgay';
     const autoRaw = await readOptionalSnapshot(ref(firebaseDatabase, `${PUBLIC_REPORT_STATS_ROOT}/${autoPath}/${date}`));
-    autoValue = markerCount(autoRaw);
+    autoValue = markerCount(autoRaw, derivedKind);
     if (reason.length < 3) throw new Error('Vui lòng nhập lý do điều chỉnh để lưu lịch sử đối chiếu.');
   }
   const recordRef = ref(firebaseDatabase, `${ROOT}/soLieuTheoNgay/${date}/${code}`);
@@ -2238,7 +2245,7 @@ var AUTO_SYNC_MS = 300000;
     }
 
     async function initializeUi(){
-      window.parent.postMessage({type:'YTE_APP_READY',version:'9.8.2'},'*');setupDates();updateRangeFields();
+      window.parent.postMessage({type:'YTE_APP_READY',version:'9.8.4'},'*');setupDates();updateRangeFields();
       document.querySelectorAll('.nav-item').forEach(function(button){button.addEventListener('click',function(){showView(button.getAttribute('data-view'))})});
       document.querySelectorAll('.admin-tab').forEach(function(tab){tab.addEventListener('click',function(){showAdminSection(tab.getAttribute('data-admin-tab'))})});
       $('btnAccount').onclick=function(){showView('auth')};$('btnTopLogout').onclick=logout;$('btnSync').onclick=function(){syncData(false)};$('btnApply').onclick=function(){syncData(false)};$('rangeType').onchange=function(){updateRangeFields()};$('contentFilter').onchange=renderAll;
