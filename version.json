@@ -1,7 +1,7 @@
 {
-  "version": "9.9.0",
+  "version": "9.9.1",
   "releasedAt": "2026-08-18",
-  "title": "Source of Truth + Đối soát + Deep-link 9.9.0",
-  "businessBaseline": "Business Stable v1.0",
-  "message": "Bổ sung Tử vong tại nơi khác; tra cứu lịch sử theo khoảng ngày; Chuyển viện/Tử vong chỉ lấy từ dữ liệu Báo cáo và không chỉnh trực tiếp tại Tổng hợp; thêm yêu cầu đối soát, Push chi tiết và deep-link mở đúng hồ sơ/yêu cầu."
+  "title": "Professional Popup & Mobile Report UI 9.9.1",
+  "businessBaseline": "Business Stable v1.0 / Source of Truth 9.9.0",
+  "message": "Tinh chỉnh giao diện production: popup Yêu cầu kiểm tra số liệu được thiết kế lại theo dạng modal chuyên nghiệp, cân đối desktop/PWA; sửa tiêu đề Chuyển viện & tử vong bị bó hẹp trên mobile; tối ưu thanh hành động và bộ lọc lịch sử. Không thay đổi Firebase schema, Rules, Apps Script Gateway, OneSignal targeting hoặc nghiệp vụ nguồn dữ liệu."
 }
