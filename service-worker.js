@@ -1,24 +1,24 @@
 'use strict';
 
-const APP_VERSION = '9.9.1';
+const APP_VERSION = '9.9.5';
 const CACHE_PREFIX = 'tong-hop-so-lieu-y-te-firebase-';
 const CACHE_NAME = CACHE_PREFIX + 'v' + APP_VERSION;
 const LEGACY_CACHE_NAMES = new Set(['yte-tan-hiep-v5']);
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css?v=9.9.1',
-  './reports.css?v=9.9.1',
-  './journeys.css?v=9.9.1',
-  './app-config.js?v=9.9.1',
-  './ui.js?v=9.9.1',
-  './update-manager.js?v=9.9.1',
-  './notifications.js?v=9.9.1',
-  './app.js?v=9.9.1',
+  './styles.css?v=9.9.5',
+  './reports.css?v=9.9.5',
+  './journeys.css?v=9.9.5',
+  './app-config.js?v=9.9.5',
+  './ui.js?v=9.9.5',
+  './update-manager.js?v=9.9.5',
+  './notifications.js?v=9.9.5',
+  './app.js?v=9.9.5',
   './report-preview.js',
   './excel-export.js',
-  './reports.js?v=9.9.1',
-  './journeys.js?v=9.9.1',
+  './reports.js?v=9.9.5',
+  './journeys.js?v=9.9.5',
   './version.json',
   './manifest.webmanifest',
   './offline.html',
@@ -44,6 +44,8 @@ self.addEventListener('activate', (event) => {
         ).map((key) => caches.delete(key))
       ))
       .then(() => self.clients.claim())
+      .then(() => self.clients.matchAll({ type: 'window', includeUncontrolled: true }))
+      .then((clients) => clients.forEach((client) => client.postMessage({ type: 'YTE_SW_ACTIVATED', version: APP_VERSION })))
   );
 });
 

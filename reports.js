@@ -130,11 +130,27 @@ function isOwner(user) { return !!(user && normalizeEmail(user.email) === OWNER_
 function validPermission(permission) {
   return !!(permission && permission.active === true && ['admin', 'nhaplieu', 'viewer'].includes(permission.role));
 }
+function isTongHopAdmin() {
+  return !!(reportState.tongHopPermission && reportState.tongHopPermission.active === true && reportState.tongHopPermission.role === 'admin');
+}
+function isReportAdmin() {
+  return !!(validPermission(reportState.permission) && reportState.permission.role === 'admin');
+}
+function isGlobalAdmin() {
+  return !!((reportState.user || auth.currentUser) && (isOwner(reportState.user || auth.currentUser) || isTongHopAdmin() || isReportAdmin()));
+}
+function hasReportViewAccess() {
+  return isGlobalAdmin() || validPermission(reportState.permission);
+}
+function effectiveReportRole() {
+  if (isGlobalAdmin()) return 'admin';
+  return validPermission(reportState.permission) ? reportState.permission.role : 'viewer';
+}
 function canEditReport() {
-  return validPermission(reportState.permission) && ['admin', 'nhaplieu'].includes(reportState.permission.role);
+  return isGlobalAdmin() || (validPermission(reportState.permission) && ['admin', 'nhaplieu'].includes(reportState.permission.role));
 }
 function canAdminReport() {
-  return !!(reportState.user && (isOwner(reportState.user) || (validPermission(reportState.permission) && reportState.permission.role === 'admin')));
+  return isGlobalAdmin();
 }
 function snapshotObject(snap) { return snap && snap.exists() ? (snap.val() || {}) : {}; }
 function showToast(text, type) {
@@ -234,11 +250,12 @@ function updateModuleUi(external) {
   }
 
   const authenticated = !!(reportState.user || auth.currentUser);
-  const tongHopActive = external && typeof external.tongHopActive === 'boolean'
+  const globalAdmin = isGlobalAdmin();
+  const tongHopActive = globalAdmin || (external && typeof external.tongHopActive === 'boolean'
     ? external.tongHopActive
     : !!(reportState.tongHopPermission && reportState.tongHopPermission.active === true &&
-      ['admin', 'nhaplieu'].includes(reportState.tongHopPermission.role));
-  const reportActive = validPermission(reportState.permission);
+      ['admin', 'nhaplieu', 'viewer'].includes(reportState.tongHopPermission.role)));
+  const reportActive = globalAdmin || validPermission(reportState.permission);
 
   if ($('navReports')) $('navReports').hidden = !reportActive;
   if ($('moduleTongHopCard')) $('moduleTongHopCard').hidden = !tongHopActive;
@@ -260,7 +277,7 @@ async function routeAfterLogin(result) {
   await refreshAccess();
   clearGlobalMessage();
   const tongHopActive = !!(result && result.active === true);
-  const reportActive = validPermission(reportState.permission);
+  const reportActive = hasReportViewAccess();
   if (tongHopActive) activateView('dashboard');
   else if (reportActive) activateView('reports');
   else activateView('home');
@@ -271,7 +288,7 @@ async function routeAfterRestore(result) {
   const current = document.querySelector('.view.active');
   const currentName = current ? current.id.replace(/View$/, '') : '';
   const tongHopActive = !!(result && result.active === true);
-  const reportActive = validPermission(reportState.permission);
+  const reportActive = hasReportViewAccess();
   if (!auth.currentUser) return;
   if (currentName === 'home' && (tongHopActive || reportActive)) {
     activateView(tongHopActive ? 'dashboard' : 'reports');
@@ -333,7 +350,7 @@ function stopReportRealtime() {
 }
 
 function startReportRealtime() {
-  if (!validPermission(reportState.permission) && !isOwner(reportState.user)) {
+  if (!hasReportViewAccess()) {
     stopReportRealtime();
     return;
   }
@@ -347,7 +364,7 @@ function startReportRealtime() {
 }
 
 async function loadReports(force) {
-  if (!validPermission(reportState.permission) && !isOwner(reportState.user)) {
+  if (!hasReportViewAccess()) {
     $('reportList').innerHTML = '<div class="empty">Tài khoản chưa được cấp quyền Báo cáo.</div>';
     return;
   }
@@ -459,7 +476,7 @@ function setReportMode(mode) {
 
 async function activateReportsView() {
   await refreshAccess();
-  if (!validPermission(reportState.permission) && !isOwner(reportState.user)) {
+  if (!hasReportViewAccess()) {
     activateView('home');
     return;
   }
@@ -510,7 +527,7 @@ function setReportFormReadonly(readonly) {
 }
 function populateReadonlyReportDetails(item) {
   if (!$('reportReadonlyView')) return;
-  const facts=[item.gioiTinh||'',item.namSinh?`Sinh năm ${item.namSinh}`:'',item.theBHYT?`BHYT ${item.theBHYT}`:''].filter(Boolean);
+  const facts=[item.gioiTinh||'',item.namSinh?`Sinh năm ${item.namSinh}`:''].filter(Boolean);
   $('reportDetailName').textContent=item.hoTenBenhNhan||'Chưa có họ tên';$('reportDetailFacts').textContent=facts.length?facts.join(' · '):'Chưa có thông tin nhân thân';
   $('reportDetailDate').textContent=fmtDate(item.ngayTuVong||item.ngayBaoCao||'');$('reportDetailPlace').textContent=item.noiTuVong||'Trung tâm Bảo trợ xã hội Tân Hiệp';$('reportDetailAddress').textContent=item.diaChi||'—';$('reportDetailCause').textContent=item.nguyenNhan||'—';
   const note=String(item.ghiChu||'').trim();$('reportDetailNote').textContent=note||'—';$('reportDetailNoteRow').hidden=!note;$('reportDetailReporter').textContent=item.createdByName||item.legacyNguoiNhap||'—';
@@ -594,7 +611,7 @@ function reportPayload() {
   const name = formatPersonName($('reportPatientName').value || '');
   const gender = $('reportGender').value;
   const birth = String($('reportBirthYear').value || '').trim();
-  const bhyt = normalizeBHYT($('reportBHYT')?.value || '');
+  const bhyt = '';
   const address = String($('reportAddress').value || '').trim();
   const note = String($('reportNote').value || '').trim();
   if (name.length < 2) throw new Error('Vui lòng nhập họ tên bệnh nhân.');
@@ -655,19 +672,8 @@ function comparePatientIdentity(source, payload) {
   const payloadGender = String(payload.gioiTinh || '');
   const sourceYear = Number(source.namSinh || 0);
   const payloadYear = Number(payload.namSinh || 0);
-  const sourceBhyt = normalizeBHYT(source.theBHYTNorm || source.theBHYT || '');
-  const payloadBhyt = normalizeBHYT(payload.theBHYT || '');
   const sameProfile = sourceName === payloadName && sourceGender === payloadGender && sourceYear === payloadYear;
-
-  if (sourceBhyt && payloadBhyt && sourceBhyt === payloadBhyt && !sameProfile) {
-    return { match: false, conflict: true, reason: 'Mã BHYT này đang gắn với họ tên/giới tính/năm sinh khác. Vui lòng kiểm tra lại thông tin.' };
-  }
-  if (sameProfile && sourceBhyt && payloadBhyt && sourceBhyt !== payloadBhyt) {
-    return { match: false, conflict: true, reason: 'Đối tượng cùng họ tên, giới tính và năm sinh đang có mã BHYT khác. Vui lòng kiểm tra lại trước khi ghi nhận.' };
-  }
-  if (!sameProfile) return { match: false, conflict: false };
-  if (!sourceBhyt || !payloadBhyt || sourceBhyt === payloadBhyt) return { match: true, conflict: false };
-  return { match: false, conflict: false };
+  return sameProfile ? { match: true, conflict: false } : { match: false, conflict: false };
 }
 
 async function findJourneyConflict(payload) {
@@ -761,7 +767,7 @@ async function saveReport() {
       uid: user.uid,
       email: normalizeEmail(user.email),
       displayName,
-      role: reportState.permission.role,
+      role: effectiveReportRole(),
       createdAt: now
     };
     updates[`${REPORT_ROOT}/nhatKy/${monthKey(record.ngayBaoCao)}/${logId}`] = {
@@ -773,7 +779,7 @@ async function saveReport() {
       uid: user.uid,
       email: normalizeEmail(user.email),
       displayName,
-      role: reportState.permission.role,
+      role: effectiveReportRole(),
       createdAt: now
     };
     if (record.loaiBaoCao === 'TU_VONG' && record.source === 'CENTER_DEATH') {
@@ -837,7 +843,7 @@ async function softDeleteReport(id) {
     uid: user.uid,
     email: normalizeEmail(user.email),
     displayName,
-    role: reportState.permission.role,
+    role: effectiveReportRole(),
     createdAt: now
   };
   updates[`${REPORT_ROOT}/nhatKy/${monthKey(item.ngayBaoCao)}/${logId}`] = {
@@ -849,7 +855,7 @@ async function softDeleteReport(id) {
     uid: user.uid,
     email: normalizeEmail(user.email),
     displayName,
-    role: reportState.permission.role,
+    role: effectiveReportRole(),
     createdAt: now
   };
   if (item.loaiBaoCao === 'TU_VONG' && (item.source === 'CENTER_DEATH' || normalizeSearch(item.noiTuVong) === normalizeSearch('Trung tâm Bảo trợ xã hội Tân Hiệp'))) {

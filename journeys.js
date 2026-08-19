@@ -18,6 +18,7 @@ import { openReportPreview } from './report-preview.js';
 const CFG = window.YTE_APP_CONFIG || {};
 const OWNER_EMAIL = String(CFG.OWNER_EMAIL || '').trim().toLowerCase();
 const REPORT_ROOT = 'baoCaoYTe';
+const TONG_HOP_ROOT = 'tongHopYTe';
 const YTE_APP_ROOT = 'yTeApp';
 const REVIEW_ROOT = `${YTE_APP_ROOT}/yeuCauDoiSoat`;
 const CENTER_NAME = 'Trung tâm Bảo trợ xã hội Tân Hiệp';
@@ -34,6 +35,7 @@ const db = getDatabase(app);
 
 const state = {
   permission: null,
+  tongHopPermission: null,
   subView: 'tracking',
   openCases: [],
   closedCases: [],
@@ -101,7 +103,7 @@ function preferredName(uid, fallback) {
 function currentDisplayName() {
   const user = auth.currentUser;
   if (!user) return '—';
-  return preferredName(user.uid, (state.permission && state.permission.displayName) || user.displayName || user.email || '—');
+  return preferredName(user.uid, ((state.permission && state.permission.displayName) || (state.tongHopPermission && state.tongHopPermission.displayName)) || user.displayName || user.email || '—');
 }
 async function resolveCurrentDisplayName() {
   const user = auth.currentUser;
@@ -140,12 +142,10 @@ function iconSvg(name, className = 'journey-btn-icon') {
   const body = icons[name] || '';
   return `<svg class="${className}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
 }
-function patientFactsHtml(item, options = {}) {
+function patientFactsHtml(item) {
   const parts = [];
   if (validGender(item && item.gioiTinh)) parts.push(`<span>Giới tính: <b>${esc(item.gioiTinh)}</b></span>`);
   if (validBirthYear(item && item.namSinh)) parts.push(`<span>Sinh năm: <b>${esc(item.namSinh)}</b></span>`);
-  const bhyt = String(item && item.theBHYT || '').trim();
-  if (options.includeBHYT !== false) parts.push(`<span>BHYT: <b>${esc(bhyt || 'Chưa ghi nhận')}</b></span>`);
   return parts.length ? `<span class="journey-person-facts">${parts.join('<i aria-hidden="true">–</i>')}</span>` : '';
 }
 function isoDateAt(value) {
@@ -280,15 +280,27 @@ function isOwner() {
 function validPermission(permission) {
   return !!(permission && permission.active === true && ['admin', 'nhaplieu', 'viewer'].includes(permission.role));
 }
+function isTongHopAdmin() {
+  return !!(state.tongHopPermission && state.tongHopPermission.active === true && state.tongHopPermission.role === 'admin');
+}
+function isReportAdmin() {
+  return !!(validPermission(state.permission) && state.permission.role === 'admin');
+}
+function isGlobalAdmin() {
+  return isOwner() || isTongHopAdmin() || isReportAdmin();
+}
+function canView() {
+  return isGlobalAdmin() || validPermission(state.permission);
+}
 function canEdit() {
-  return isOwner() || (validPermission(state.permission) && ['admin', 'nhaplieu'].includes(state.permission.role));
+  return isGlobalAdmin() || (validPermission(state.permission) && ['admin', 'nhaplieu'].includes(state.permission.role));
 }
 function canDelete() {
-  return isOwner() || (validPermission(state.permission) && state.permission.role === 'admin');
+  return isGlobalAdmin();
 }
 function roleForLog() {
-  if (isOwner()) return 'admin';
-  return state.permission && ['admin', 'nhaplieu'].includes(state.permission.role) ? state.permission.role : 'nhaplieu';
+  if (isGlobalAdmin()) return 'admin';
+  return state.permission && state.permission.role === 'nhaplieu' ? 'nhaplieu' : 'viewer';
 }
 function showToast(text, type) {
   const box = $('toast');
@@ -312,11 +324,8 @@ function friendlyError(error, fallback) {
   if (!message || technical) return fallback || 'Không thể thực hiện thao tác. Vui lòng kiểm tra kết nối hoặc quyền truy cập rồi thử lại.';
   return message;
 }
-function patientKey(name, gender, birthYear, bhyt) {
-  const b = normalizeBHYT(bhyt);
-  const raw = b
-    ? `${normalizeText(name)}|${String(gender || '').trim()}|${Number(birthYear || 0)}|${b}`
-    : `${normalizeText(name)}|${String(gender || '').trim()}|${Number(birthYear || 0)}`;
+function patientKey(name, gender, birthYear) {
+  const raw = `${normalizeText(name)}|${String(gender || '').trim()}|${Number(birthYear || 0)}`;
   let hash = 2166136261;
   for (let i = 0; i < raw.length; i += 1) {
     hash ^= raw.charCodeAt(i);
@@ -337,21 +346,11 @@ function activeDuplicate(payload) {
   const n = normalizeText(payload.doiTuong);
   const g = String(payload.gioiTinh || '').trim();
   const y = Number(payload.namSinh || 0);
-  const b = normalizeBHYT(payload.theBHYT);
   for (const item of state.openCases) {
-    const itemName = normalizeText(item.doiTuongNorm || item.doiTuong);
-    const itemGender = String(item.gioiTinh || '').trim();
-    const itemYear = Number(item.namSinh || 0);
-    const itemBhyt = normalizeBHYT(item.theBHYTNorm || item.theBHYT);
-    const sameProfile = itemName === n && itemGender === g && itemYear === y;
-    if (b && itemBhyt && b === itemBhyt) {
-      if (!sameProfile) return { conflict: true, item, message: 'Mã BHYT này đang được dùng cho một đối tượng có họ tên/giới tính/năm sinh khác. Vui lòng kiểm tra lại thông tin.' };
-      return { duplicate: true, item };
-    }
-    if (sameProfile && (!b || !itemBhyt)) return { duplicate: true, item };
-    if (sameProfile && b && itemBhyt && b !== itemBhyt) {
-      return { conflict: true, item, message: 'Đối tượng cùng họ tên, giới tính và năm sinh đang có hành trình nhưng mã BHYT khác. Vui lòng kiểm tra lại trước khi tạo hành trình mới.' };
-    }
+    const sameProfile = normalizeText(item.doiTuongNorm || item.doiTuong) === n
+      && String(item.gioiTinh || '').trim() === g
+      && Number(item.namSinh || 0) === y;
+    if (sameProfile) return { duplicate: true, item };
   }
   return null;
 }
@@ -360,22 +359,15 @@ function compareIdentity(payload, item) {
   const n = normalizeText(payload.doiTuong);
   const g = String(payload.gioiTinh || '').trim();
   const y = Number(payload.namSinh || 0);
-  const b = normalizeBHYT(payload.theBHYT);
-  const itemName = normalizeText(item.doiTuongNorm || item.doiTuong || item.hoTenNorm || item.hoTenBenhNhan);
-  const itemGender = String(item.gioiTinh || '').trim();
-  const itemYear = Number(item.namSinh || 0);
-  const itemBhyt = normalizeBHYT(item.theBHYTNorm || item.theBHYT);
-  const sameProfile = itemName === n && itemGender === g && itemYear === y;
-  if (b && itemBhyt && b === itemBhyt) return sameProfile ? 'same' : 'conflict';
-  if (sameProfile && (!b || !itemBhyt)) return 'same';
-  if (sameProfile && b && itemBhyt && b !== itemBhyt) return 'conflict';
-  return 'different';
+  const sameProfile = normalizeText(item.doiTuongNorm || item.doiTuong || item.hoTenNorm || item.hoTenBenhNhan) === n
+    && String(item.gioiTinh || '').trim() === g
+    && Number(item.namSinh || 0) === y;
+  return sameProfile ? 'same' : 'different';
 }
 
 async function deceasedDuplicate(payload) {
   for (const item of state.closedCases.filter((row) => row.trangThaiHienTai === 'TU_VONG_TAI_BENH_VIEN' || row.trangThaiHienTai === 'TU_VONG_TAI_NOI_KHAC')) {
     const match = compareIdentity(payload, item);
-    if (match === 'conflict') return { conflict: true, message: 'Thông tin đối tượng trùng hồ sơ tử vong nhưng họ tên/giới tính/năm sinh/BHYT không khớp hoàn toàn. Vui lòng kiểm tra lại.' };
     if (match === 'same') return { deceased: true, label: item.trangThaiHienTai === 'TU_VONG_TAI_NOI_KHAC' ? 'tử vong tại nơi khác' : 'tử vong tại bệnh viện' };
   }
   return null;
@@ -410,8 +402,8 @@ function formSignature(ids) {
     return `${id}:${String(el.value || '')}`;
   }).join('|');
 }
-const CREATE_FIELD_IDS = ['journeyPatient','journeyGender','journeyBirthYear','journeyBHYT','journeyTransferType','journeyTransferDate','journeyTransferTypeOther','journeyTo','journeyToOther','journeyReason','journeyDiagnosis','journeyNote'];
-const UPDATE_FIELD_IDS = ['journeyUpdateStatus','journeyUpdateDestination','journeyUpdateDestinationOther','journeyUpdateReason','journeyUpdateDiagnosis','journeyUpdateDeathDate','journeyUpdateDeathPlace','journeyReturnCondition','journeyUpdateNote'];
+const CREATE_FIELD_IDS = ['journeyPatient','journeyGender','journeyBirthYear','journeyTransferType','journeyTransferDate','journeyTransferTypeOther','journeyTo','journeyToOther','journeyDiagnosis','journeyNote'];
+const UPDATE_FIELD_IDS = ['journeyUpdateStatus','journeyUpdateBusinessDate','journeyUpdateDestination','journeyUpdateDestinationOther','journeyUpdateDiagnosis','journeyUpdateDeathPlace','journeyReturnCondition','journeyUpdateNote'];
 function isCreateDirty() { return !!state.createBaseline && formSignature(CREATE_FIELD_IDS) !== state.createBaseline; }
 function isUpdateDirty() { return !!state.updateBaseline && formSignature(UPDATE_FIELD_IDS) !== state.updateBaseline; }
 async function confirmInApp(options) {
@@ -461,10 +453,15 @@ async function refreshPermission() {
   const user = auth.currentUser;
   if (!user) {
     state.permission = null;
+    state.tongHopPermission = null;
     return null;
   }
-  const snap = await get(ref(db, `${REPORT_ROOT}/phanQuyen/${user.uid}`));
-  state.permission = snap.exists() ? snap.val() : null;
+  const [reportSnap, tongHopSnap] = await Promise.all([
+    get(ref(db, `${REPORT_ROOT}/phanQuyen/${user.uid}`)),
+    get(ref(db, `${TONG_HOP_ROOT}/phanQuyen/${user.uid}`))
+  ]);
+  state.permission = reportSnap.exists() ? reportSnap.val() : null;
+  state.tongHopPermission = tongHopSnap.exists() ? tongHopSnap.val() : null;
   return state.permission;
 }
 
@@ -481,10 +478,30 @@ function deathBusinessDate(item) {
   if (validIsoBusinessDate(eventDate)) return eventDate;
   return isoDateFromTimestamp(event && event.createdAt || item && item.updatedAt || 0);
 }
+function eventBusinessDate(event, item) {
+  if (!event) return '';
+  const direct = String(event.ngaySuKien || '').trim();
+  if (validIsoBusinessDate(direct)) return direct;
+  const transferDate = String(event.ngayChuyenVien || '').trim();
+  if (validIsoBusinessDate(transferDate)) return transferDate;
+  const deathDate = String(event.ngayTuVong || '').trim();
+  if (validIsoBusinessDate(deathDate)) return deathDate;
+  return isoDateFromTimestamp(event.createdAt || 0) || transferBusinessDate(item);
+}
+function latestBusinessEventDate(item) {
+  if (!item) return '';
+  const explicit = String(item.ngaySuKienHienTai || '').trim();
+  if (validIsoBusinessDate(explicit)) return explicit;
+  const events = Object.values(item.lichSu || {}).filter(Boolean)
+    .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+  const latest = events.length ? eventBusinessDate(events[0], item) : '';
+  return validIsoBusinessDate(latest) ? latest : transferBusinessDate(item);
+}
 function historyBusinessDate(item) {
   if (!item) return '';
   if (item.trangThaiHienTai === 'TU_VONG_TAI_BENH_VIEN' || item.trangThaiHienTai === 'TU_VONG_TAI_NOI_KHAC') return deathBusinessDate(item);
-  if (item.trangThaiHienTai === 'DA_VE_TRUNG_TAM') return isoDateFromTimestamp(item.ngayGioVe || item.updatedAt || 0);
+  const latest = latestBusinessEventDate(item);
+  if (validIsoBusinessDate(latest)) return latest;
   return transferBusinessDate(item);
 }
 function scheduleStatisticsReconciliation() {
@@ -534,7 +551,7 @@ function stopJourneyRealtime() {
 }
 
 function startJourneyRealtime() {
-  if (!validPermission(state.permission) && !isOwner()) {
+  if (!canView()) {
     stopJourneyRealtime();
     return;
   }
@@ -575,7 +592,7 @@ function startJourneyRealtime() {
 }
 
 async function loadJourneys(force) {
-  if (!validPermission(state.permission) && !isOwner()) return false;
+  if (!canView()) return false;
   startJourneyRealtime();
   if (!force && state.loadedAt) { renderTracking(); renderHistory(); return true; }
   if (state.loading && !force) return true;
@@ -599,9 +616,9 @@ function renderTracking() {
   const rows = state.openCases.filter((item) => {
     if (!search) return true;
     return normalizeText([
-      item.doiTuong, item.gioiTinh, item.namSinh, item.theBHYT, item.noiHienTai, statusLabel(item.trangThaiHienTai),
+      item.doiTuong, item.gioiTinh, item.namSinh, item.noiHienTai, statusLabel(item.trangThaiHienTai),
       transferTypeLabel(inferLegacyTransferType(item), item.hinhThucChuyenKhac),
-      item.lyDoHienTai, item.tinhTrangChanDoanHienTai, item.ghiChu
+      item.tinhTrangChanDoanHienTai, item.ghiChu
     ].join(' ')).includes(search);
   });
   if ($('journeyOpenCount')) $('journeyOpenCount').textContent = String(state.openCases.length);
@@ -637,7 +654,6 @@ function renderTracking() {
             <summary>Thông tin chi tiết</summary>
             <div class="journey-detail-grid-inline">
               <div><span>Ngày chuyển viện</span><strong>${esc(formatBusinessDate(transferBusinessDate(item)))}</strong></div>
-              <div><span>Lý do</span><strong>${esc(item.lyDoHienTai || '—')}</strong></div>
               <div><span>Tình trạng/chẩn đoán</span><strong>${esc(item.tinhTrangChanDoanHienTai || '—')}</strong></div>
               ${note ? `<div class="journey-detail-note"><span>Ghi chú</span><strong>${esc(note)}</strong></div>` : ''}
               <div><span>Người cập nhật</span><strong>${esc(preferredName(item.updatedByUid || item.createdByUid, item.updatedByName || item.createdByName))}</strong></div>
@@ -774,23 +790,6 @@ function previewClinicalReport() {
 
 function renderHistory() {
   const rows = filteredHistoryRows();
-  const allRows = combinedHistoryRows();
-  const summary = $('journeyHistorySummary');
-  if (summary) {
-    const invalidRange = String($('journeyHistoryFrom')?.value || '').trim() && String($('journeyHistoryTo')?.value || '').trim() && String($('journeyHistoryFrom').value) > String($('journeyHistoryTo').value);
-    if (invalidRange) {
-      summary.textContent = 'Khoảng ngày không hợp lệ: Từ ngày phải nhỏ hơn hoặc bằng Đến ngày.';
-    } else {
-    const returned = rows.filter((item) => item.trangThaiHienTai === 'DA_VE_TRUNG_TAM').length;
-    const hospital = rows.filter((item) => item.trangThaiHienTai === 'TU_VONG_TAI_BENH_VIEN').length;
-    const other = rows.filter((item) => item.trangThaiHienTai === 'TU_VONG_TAI_NOI_KHAC').length;
-    const from = String($('journeyHistoryFrom')?.value || '').trim();
-    const to = String($('journeyHistoryTo')?.value || '').trim();
-    const rangeText = from || to ? ` · ${formatBusinessDate(from || to)}${from && to && from !== to ? ' – ' + formatBusinessDate(to) : ''}` : '';
-    summary.textContent = `${rows.length} trường hợp${rangeText} · Về Trung tâm: ${returned} · Tử vong BV: ${hospital} · Tử vong nơi khác: ${other}`;
-    }
-  }
-
   const box = $('journeyHistoryList');
   if (!box) return;
   if (!rows.length) {
@@ -904,7 +903,7 @@ function resetCreateForm() {
   $('journeyGender').value = '';
   $('journeyBirthYear').value = '';
   $('journeyBirthYear').max = String(new Date().getFullYear());
-  $('journeyBHYT').value = '';
+  if ($('journeyBHYT')) $('journeyBHYT').value = '';
   const transferDate = $('journeyTransferDate');
   if (transferDate) { transferDate.max = todayIso(); transferDate.value = todayIso(); }
   $('journeyFrom').value = CENTER_NAME;
@@ -912,7 +911,7 @@ function resetCreateForm() {
   $('journeyToOther').value = '';
   $('journeyTransferType').value = '';
   $('journeyTransferTypeOther').value = '';
-  $('journeyReason').value = '';
+  if ($('journeyReason')) $('journeyReason').value = '';
   $('journeyDiagnosis').value = '';
   $('journeyNote').value = '';
   $('journeyCreateError').textContent = '';
@@ -926,10 +925,11 @@ function createPayload() {
   const doiTuong = formatPersonName($('journeyPatient').value || '');
   const gioiTinh = String($('journeyGender').value || '').trim();
   const namSinh = Number($('journeyBirthYear').value || 0);
-  const theBHYT = normalizeBHYT($('journeyBHYT').value || '');
+  const theBHYT = '';
   const noiDen = resolvedDestination('journeyTo', 'journeyToOther');
-  const lyDo = String($('journeyReason').value || '').trim();
   const tinhTrang = String($('journeyDiagnosis').value || '').trim();
+  // Field legacy lyDo được giữ trong Firebase để tương thích dữ liệu cũ, nhưng UI chỉ nhập Chẩn đoán.
+  const lyDo = tinhTrang;
   const ghiChu = String($('journeyNote').value || '').trim();
   const hinhThucChuyen = String($('journeyTransferType').value || '');
   const ngayChuyenVien = String($('journeyTransferDate')?.value || '').trim();
@@ -937,13 +937,11 @@ function createPayload() {
   if (doiTuong.length < 2 || doiTuong.length > 150) throw new Error('Vui lòng nhập Họ và tên từ 2 đến 150 ký tự.');
   if (!validGender(gioiTinh)) throw new Error('Vui lòng chọn Giới tính.');
   if (!validBirthYear(namSinh)) throw new Error(`Năm sinh phải từ 1900 đến ${new Date().getFullYear()}.`);
-  if (theBHYT.length > 40) throw new Error('Thẻ BHYT không hợp lệ.');
   if (!TRANSFER_TYPES.includes(hinhThucChuyen)) throw new Error('Vui lòng chọn Hình thức chuyển.');
   if (!validIsoBusinessDate(ngayChuyenVien)) throw new Error('Vui lòng chọn Ngày chuyển viện.');
   if (ngayChuyenVien > todayIso()) throw new Error('Ngày chuyển viện không được lớn hơn ngày hiện tại.');
   if (hinhThucChuyen === 'KHAC' && (hinhThucChuyenKhac.length < 2 || hinhThucChuyenKhac.length > 120)) throw new Error('Vui lòng nhập Hình thức chuyển khác.');
   if (!noiDen || noiDen.length > 300) throw new Error('Vui lòng chọn hoặc nhập Nơi đến.');
-  if (!lyDo || lyDo.length > 1000) throw new Error('Vui lòng nhập Lý do.');
   if (!tinhTrang || tinhTrang.length > 1500) throw new Error('Vui lòng nhập Tình trạng/chẩn đoán.');
   if (ghiChu.length > 2000) throw new Error('Ghi chú không được vượt quá 2.000 ký tự.');
   return {
@@ -953,7 +951,7 @@ function createPayload() {
     namSinh,
     theBHYT,
     theBHYTNorm: theBHYT,
-    doiTuongKey: patientKey(doiTuong, gioiTinh, namSinh, theBHYT),
+    doiTuongKey: patientKey(doiTuong, gioiTinh, namSinh),
     noiDen,
     lyDo,
     tinhTrang,
@@ -1027,6 +1025,7 @@ async function createJourney() {
       trangThaiHienTai: payload.trangThai,
       trangThaiKyThuat: 'OPEN',
       ngayChuyenVien: businessDate,
+      ngaySuKienHienTai: businessDate,
       // Giữ timestamp hệ thống để audit/ordering; không dùng làm ngày nghiệp vụ.
       ngayGioDi: ts,
       ngayGioVe: 0,
@@ -1057,6 +1056,7 @@ async function createJourney() {
       ghiChu: payload.ghiChu,
       trangThaiSauChang: payload.trangThai,
       ngayChuyenVien: businessDate,
+      ngaySuKien: businessDate,
       thoiDiem: ts,
       uid: user.uid,
       email,
@@ -1077,6 +1077,7 @@ async function createJourney() {
       ghiChu: payload.ghiChu,
       tinhTrangKhiVe: '',
       ngayChuyenVien: businessDate,
+      ngaySuKien: businessDate,
       uid: user.uid,
       email,
       displayName,
@@ -1192,16 +1193,17 @@ function openUpdateDialog(id, preset) {
   $('journeyUpdatePatient').textContent = item.doiTuong || '—';
   $('journeyUpdateGender').textContent = validGender(item.gioiTinh) ? item.gioiTinh : 'Chưa ghi nhận';
   $('journeyUpdateBirthYear').textContent = validBirthYear(item.namSinh) ? String(item.namSinh) : 'Chưa ghi nhận';
-  $('journeyUpdateBHYT').textContent = item.theBHYT || 'Chưa ghi nhận';
   $('journeyUpdateCurrentPlace').textContent = item.noiHienTai || '—';
   $('journeyUpdateCurrentStatus').textContent = statusLabel(item.trangThaiHienTai);
   $('journeyUpdateStatus').value = preset === 'DA_VE_TRUNG_TAM' ? 'DA_VE_TRUNG_TAM' : item.trangThaiHienTai;
   $('journeyUpdateDestination').value = '';
   $('journeyUpdateDestinationOther').value = '';
-  $('journeyUpdateReason').value = '';
+  if ($('journeyUpdateReason')) $('journeyUpdateReason').value = '';
   $('journeyUpdateDiagnosis').value = '';
-  $('journeyUpdateDeathDate').value = todayIso();
-  $('journeyUpdateDeathDate').max = todayIso();
+  const previousBusinessDate = latestBusinessEventDate(item) || transferBusinessDate(item) || todayIso();
+  $('journeyUpdateBusinessDate').value = todayIso() < previousBusinessDate ? previousBusinessDate : todayIso();
+  $('journeyUpdateBusinessDate').min = previousBusinessDate;
+  $('journeyUpdateBusinessDate').max = todayIso();
   $('journeyUpdateDeathPlace').value = '';
   $('journeyReturnCondition').value = '';
   $('journeyUpdateNote').value = '';
@@ -1225,13 +1227,19 @@ function updateUpdateFields() {
   const deathOther = status === 'TU_VONG_TAI_NOI_KHAC';
   const death = deathHospital || deathOther;
   $('journeyUpdateDestinationField').hidden = !transfer;
-  $('journeyUpdateReasonField').hidden = returned;
+  $('journeyUpdateReasonField').hidden = true;
   $('journeyUpdateDiagnosisField').hidden = returned;
   $('journeyReturnConditionField').hidden = !returned;
-  $('journeyUpdateDeathDateField').hidden = !death;
   $('journeyUpdateDeathPlaceField').hidden = !deathOther;
-  if (death && !$('journeyUpdateDeathDate').value) $('journeyUpdateDeathDate').value = todayIso();
-  $('journeyUpdateDeathDate').max = todayIso();
+  const dateLabel = death ? 'Ngày tử vong *'
+    : returned ? 'Ngày về Trung tâm *'
+    : transfer ? 'Ngày chuyển tiếp *'
+    : 'Ngày cập nhật *';
+  if ($('journeyUpdateBusinessDateLabel')) $('journeyUpdateBusinessDateLabel').textContent = dateLabel;
+  if (!$('journeyUpdateBusinessDate').value) $('journeyUpdateBusinessDate').value = todayIso();
+  $('journeyUpdateBusinessDate').max = todayIso();
+  const lastDate = latestBusinessEventDate(state.selectedCase);
+  if (validIsoBusinessDate(lastDate)) $('journeyUpdateBusinessDate').min = lastDate;
   if (!deathOther) $('journeyUpdateDeathPlace').value = '';
   if (!transfer) {
     $('journeyUpdateDestination').value = '';
@@ -1258,19 +1266,25 @@ function updatePayload() {
   if (!item) throw new Error('Không xác định được hành trình cần cập nhật.');
   const status = String($('journeyUpdateStatus').value || '');
   const ghiChu = String($('journeyUpdateNote').value || '').trim();
+  const ngaySuKien = String($('journeyUpdateBusinessDate').value || '').trim();
   if (!ALL_STATUSES.includes(status)) throw new Error('Trạng thái hiện tại chưa hợp lệ.');
   if (ghiChu.length > 2000) throw new Error('Ghi chú không được vượt quá 2.000 ký tự.');
+  if (!validIsoBusinessDate(ngaySuKien)) throw new Error('Vui lòng chọn ngày nghiệp vụ.');
+  if (ngaySuKien > todayIso()) throw new Error('Ngày nghiệp vụ không được lớn hơn ngày hiện tại.');
+  const previousBusinessDate = latestBusinessEventDate(item);
+  if (validIsoBusinessDate(previousBusinessDate) && ngaySuKien < previousBusinessDate) {
+    throw new Error('Ngày nghiệp vụ không được nhỏ hơn ngày của bước trước (' + formatBusinessDate(previousBusinessDate) + ').');
+  }
 
   if (status === 'DA_VE_TRUNG_TAM') {
     const tinhTrangKhiVe = String($('journeyReturnCondition').value || '').trim();
     if (!tinhTrangKhiVe || tinhTrangKhiVe.length > 1500) throw new Error('Vui lòng nhập Tình trạng khi về.');
-    return { status, tinhTrangKhiVe, lyDo: '', tinhTrang: '', noiDen: CENTER_NAME, ghiChu, ngayTuVong: '', noiTuVong: '' };
+    return { status, tinhTrangKhiVe, lyDo: '', tinhTrang: '', noiDen: CENTER_NAME, ghiChu, ngaySuKien, ngayTuVong: '', noiTuVong: '' };
   }
 
-  const lyDo = String($('journeyUpdateReason').value || '').trim();
   const tinhTrang = String($('journeyUpdateDiagnosis').value || '').trim();
-  if (!lyDo || lyDo.length > 1000) throw new Error('Vui lòng nhập Lý do.');
   if (!tinhTrang || tinhTrang.length > 1500) throw new Error('Vui lòng nhập Tình trạng/chẩn đoán.');
+  const lyDo = tinhTrang;
 
   let noiDen = item.noiHienTai;
   if (status === 'CHUYEN_TIEP_BENH_VIEN_KHAC') {
@@ -1282,9 +1296,7 @@ function updatePayload() {
   let ngayTuVong = '';
   let noiTuVong = '';
   if (status === 'TU_VONG_TAI_BENH_VIEN' || status === 'TU_VONG_TAI_NOI_KHAC') {
-    ngayTuVong = String($('journeyUpdateDeathDate').value || '').trim();
-    if (!validIsoBusinessDate(ngayTuVong)) throw new Error('Vui lòng chọn Ngày tử vong.');
-    if (ngayTuVong > todayIso()) throw new Error('Ngày tử vong không được lớn hơn ngày hiện tại.');
+    ngayTuVong = ngaySuKien;
     if (status === 'TU_VONG_TAI_NOI_KHAC') {
       noiTuVong = String($('journeyUpdateDeathPlace').value || '').trim();
       if (!noiTuVong || noiTuVong.length > 300) throw new Error('Vui lòng nhập Nơi tử vong.');
@@ -1293,7 +1305,7 @@ function updatePayload() {
     }
   }
 
-  return { status, tinhTrangKhiVe: '', lyDo, tinhTrang, noiDen, ghiChu, ngayTuVong, noiTuVong };
+  return { status, tinhTrangKhiVe: '', lyDo, tinhTrang, noiDen, ghiChu, ngaySuKien, ngayTuVong, noiTuVong };
 }
 
 async function saveJourneyUpdate() {
@@ -1313,8 +1325,7 @@ async function saveJourneyUpdate() {
     if (latest.trangThaiKyThuat !== 'OPEN') throw new Error('Hành trình này đã kết thúc và không thể cập nhật thêm.');
 
     const historyId = push(ref(db, `${REPORT_ROOT}/hanhTrinhChuyenVien/${caseId}/lichSu`)).key;
-    const systemDate = await serverTodayIso();
-    const businessDate = payload.ngayTuVong || systemDate;
+    const businessDate = payload.ngaySuKien;
     const logId = push(ref(db, `${REPORT_ROOT}/nhatKy/${businessDate.slice(0, 7)}`)).key;
     const displayName = await resolveCurrentDisplayName();
     const email = normalizeEmail(user.email);
@@ -1338,6 +1349,7 @@ async function saveJourneyUpdate() {
       noiDiBanDau: latest.noiDiBanDau || CENTER_NAME,
       noiHienTai: isReturn ? CENTER_NAME : (isTransfer ? payload.noiDen : latest.noiHienTai),
       ngayChuyenVien: String(latest.ngayChuyenVien || transferBusinessDate(latest) || ''),
+      ngaySuKienHienTai: businessDate,
       ngayTuVong: isDeath ? payload.ngayTuVong : String(latest.ngayTuVong || ''),
       noiTuVong: isDeath ? payload.noiTuVong : String(latest.noiTuVong || ''),
       lyDoHienTai: isReturn ? latest.lyDoHienTai : payload.lyDo,
@@ -1372,6 +1384,7 @@ async function saveJourneyUpdate() {
       trangThaiSau: payload.status,
       noiTruoc: latest.noiHienTai || '',
       noiSau: isReturn ? CENTER_NAME : (isTransfer ? payload.noiDen : (isDeathOther ? payload.noiTuVong : latest.noiHienTai || '')),
+      ngaySuKien: businessDate,
       ngayTuVong: isDeath ? payload.ngayTuVong : '',
       noiTuVong: isDeath ? payload.noiTuVong : '',
       hinhThucChuyen: latest.hinhThucChuyen || inferLegacyTransferType(latest),
@@ -1399,6 +1412,7 @@ async function saveJourneyUpdate() {
         tinhTrangChanDoan: isReturn ? payload.tinhTrangKhiVe : payload.tinhTrang,
         ghiChu: payload.ghiChu,
         trangThaiSauChang: payload.status,
+        ngaySuKien: businessDate,
         thoiDiem: ts,
         uid: user.uid,
         email,
@@ -1456,7 +1470,6 @@ function openDetail(id) {
       <div class="journey-detail-summary-facts">
         ${validGender(item.gioiTinh) ? `<span>${esc(item.gioiTinh)}</span>` : ''}
         ${validBirthYear(item.namSinh) ? `<span>Sinh năm ${esc(item.namSinh)}</span>` : ''}
-        <span>BHYT ${esc(item.theBHYT || 'Chưa ghi nhận')}</span>
         <span>${esc(transferTypeLabel(inferLegacyTransferType(item), item.hinhThucChuyenKhac))}</span>
       </div>
       <span class="journey-status ${statusClass(item.trangThaiHienTai)}">${item.trangThaiHienTai === 'DA_VE_TRUNG_TAM' ? '✓ ' : ''}${esc(statusLabel(item.trangThaiHienTai))}</span>
@@ -1470,7 +1483,6 @@ function openDetail(id) {
   const events = Object.values(item.lichSu || {}).sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0));
   $('journeyTimeline').innerHTML = events.length ? events.map((event) => {
     const note = String(event.ghiChu || '').trim();
-    const reason = String(event.lyDo || '').trim();
     const diagnosis = String(event.tinhTrangChanDoan || '').trim();
     const returnCondition = String(event.tinhTrangKhiVe || '').trim();
     const lines = [];
@@ -1478,7 +1490,6 @@ function openDetail(id) {
       if (returnCondition) lines.push(`<p><b>Tình trạng khi về:</b> ${esc(returnCondition)}</p>`);
     } else {
       if (event.loaiSuKien === 'TU_VONG_TAI_NOI_KHAC' && event.noiTuVong) lines.push(`<p><b>Nơi tử vong:</b> ${esc(event.noiTuVong)}</p>`);
-      if (reason) lines.push(`<p><b>Lý do:</b> ${esc(reason)}</p>`);
       if (diagnosis) lines.push(`<p><b>Tình trạng/chẩn đoán:</b> ${esc(diagnosis)}</p>`);
     }
     if (note) lines.push(`<p><b>Ghi chú:</b> ${esc(note)}</p>`);
@@ -1486,7 +1497,7 @@ function openDetail(id) {
     return `<div class="journey-timeline-item">
       <div class="journey-timeline-dot"></div>
       <div class="journey-timeline-card">
-        <div class="journey-timeline-head"><strong>${esc(timelineTitle(event))}</strong><span>${esc(event.loaiSuKien === 'MO_HANH_TRINH' ? formatBusinessDate(event.ngayChuyenVien || transferBusinessDate(item)) : (event.loaiSuKien === 'TU_VONG_TAI_BENH_VIEN' || event.loaiSuKien === 'TU_VONG_TAI_NOI_KHAC') ? formatBusinessDate(event.ngayTuVong || historyBusinessDate(item)) : fmtDateTime(event.createdAt))}</span></div>
+        <div class="journey-timeline-head"><strong>${esc(timelineTitle(event))}</strong><span>${esc(formatBusinessDate(eventBusinessDate(event, item)))} <small class="journey-audit-time">· nhập ${esc(fmtDateTime(event.createdAt))}</small></span></div>
         <div class="journey-timeline-status ${statusClass(event.trangThaiSau)}">${esc(timelineBadge(event, item))}</div>
         ${lines.join('')}
         <div class="journey-timeline-by">${personLabel}: ${esc(preferredName(event.uid, event.displayName))}</div>
@@ -1645,7 +1656,7 @@ function openHistoryFilter(options) {
 
 async function activate() {
   await refreshPermission();
-  if (!validPermission(state.permission) && !isOwner()) return;
+  if (!canView()) return;
   if ($('journeyCreateTab')) $('journeyCreateTab').hidden = !canEdit();
   renderReviewBadge();
   if (!state.createBaseline) resetCreateForm();
@@ -1662,6 +1673,8 @@ function setVisible(visible) {
 function initEvents() {
   if (state.initialized) return;
   state.initialized = true;
+  const advancedHistory = $('journeyHistoryAdvanced');
+  if (advancedHistory && window.matchMedia && window.matchMedia('(max-width: 760px)').matches) advancedHistory.open = false;
   initializeActionPopoverPositioning();
   document.querySelectorAll('.journey-subtab').forEach((button) => {
     button.addEventListener('click', () => requestSubView(button.getAttribute('data-journey-view')));
@@ -1671,7 +1684,6 @@ function initEvents() {
   $('journeyCreateModeTransfer')?.addEventListener('click', () => { if (state.subView !== 'create') setSubView('create'); setTimeout(() => $('journeyPatient')?.focus(), 0); });
   $('journeyTransferType')?.addEventListener('change', updateCreateDynamicFields);
   $('journeyTo')?.addEventListener('change', updateCreateDynamicFields);
-  $('journeyBHYT')?.addEventListener('input', () => { $('journeyBHYT').value = normalizeBHYT($('journeyBHYT').value); });
   $('journeyTrackingSearch')?.addEventListener('input', renderTracking);
   $('journeyTrackingReload')?.addEventListener('click', () => loadJourneys(true));
   $('journeyHistorySearch')?.addEventListener('input', renderHistory);
@@ -1739,6 +1751,8 @@ window.YTE_JOURNEYS = {
   openResource,
   openHistoryFilter,
   openReviewInbox,
+  captureUpdateContext: () => ({ subView: state.subView || 'tracking' }),
+  restoreUpdateContext: (ctx) => { if (ctx && ctx.subView) setSubView(ctx.subView); },
   hasUnsavedChanges: () => isCreateDirty() || (!($('journeyUpdateLayer')?.hidden) && isUpdateDirty())
 };
 
@@ -1748,6 +1762,7 @@ function start() {
     if (!user) {
       stopJourneyRealtime();
       state.permission = null;
+      state.tongHopPermission = null;
       state.openCases = [];
       state.closedCases = [];
       state.transferStatsToday = {};
