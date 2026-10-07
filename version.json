@@ -1,7 +1,7 @@
 {
-  "version": "10.0.6",
-  "releasedAt": "2026-09-29",
-  "title": "Fix danh sách Điều trị lao / Chuyển Trung tâm v10.0.6",
-  "businessBaseline": "v10.0.5 Dynamic Dashboard & Four Modules / Source of Truth preserved",
-  "message": "Sửa lỗi Firebase permission_denied khi lưu danh sách người do Rules nhận dạng chỉ tiêu theo tên hiển thị và do version private/public mirror có thể lệch; giữ nguyên dữ liệu, phân quyền, Source of Truth, realtime, PWA và Push."
+  "version": "10.0.9",
+  "releasedAt": "2026-10-06",
+  "title": "Hồi gia tại bệnh viện",
+  "businessBaseline": "v10.0.8 production source + hospital home-return journey closure",
+  "message": "Bổ sung trạng thái Hồi gia tại bệnh viện: chỉ nhập Ngày hồi gia, đóng hành trình không tạo thêm Chuyển viện/Tử vong, cập nhật Lịch sử/điều chỉnh, Firebase Rules và OneSignal Gateway."
 }
