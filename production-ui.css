@@ -1,5 +1,5 @@
 /* ======================================================================
-   PHÒNG Y TẾ — PRODUCTION UI v10.0.19
+   PHÒNG Y TẾ — PRODUCTION UI v10.0.20
    Presentation layer only. Business/data/auth contracts remain in JS.
    Visual baseline: desktop + mobile approved 16/09/2026.
    ====================================================================== */
@@ -929,7 +929,7 @@ html.theme-dark body:has(#authView.active){background:#0f1420!important;color:#f
 html.theme-dark.theme-eye-comfort body:has(#authView.active){background:#151711!important;}
 
 /* ======================================================================
-   v10.0.19 — FINAL DARK THEME COMPLETENESS + VIETNAMESE TYPOGRAPHY
+   v10.0.20 — FINAL DARK THEME COMPLETENESS + VIETNAMESE TYPOGRAPHY
    UI/CSS-only hardening. No business/data/permission logic is changed.
    This block intentionally loads last so legacy light surfaces cannot leak
    into dark mode after realtime/dynamic rendering.
@@ -1217,7 +1217,7 @@ html.theme-dark #journeyView .journey-person-icon{
 }
 
 /* ========================================================================
-   v10.0.19 – Approved UI changes YC-YTE-001..005 (frontend only)
+   v10.0.20 – Approved UI changes YC-YTE-001..005 (frontend only)
    Keep Firebase flows, admin rights, journey and personal-list forms unchanged.
    ======================================================================== */
 [hidden] { display:none!important; }
