@@ -62,6 +62,9 @@ const state = {
   retroCaseId: '',
   retroBaseline: '',
   retroFromDetail: false,
+  hospitalFixedOptions: null,
+  hospitalOptionSignature: '',
+  hospitalOptions: [],
   reconcileTimer: null,
   reconciling: false
 };
@@ -271,6 +274,96 @@ function canonicalTransferType(item) {
   return ['CAP_CUU', 'TAI_KHAM', 'CHUYEN_VIEN', 'KHAC'].includes(value) ? value : 'CHUYEN_VIEN';
 }
 
+
+// YC-YTE-008 – Một danh sách cơ sở y tế từ dropdown đã có và các hành trình
+// hiện được phép đọc. Không tạo RTDB path riêng, không sao chép dữ liệu người bệnh.
+function cleanHospitalName(value) {
+  return String(value || '').normalize('NFC').trim().replace(/\s+/g, ' ').slice(0, 300);
+}
+function exactHospitalKey(value) { return cleanHospitalName(value).toLocaleLowerCase('vi-VN'); }
+function hospitalCandidate(value) {
+  const name = cleanHospitalName(value);
+  const key = normalizeText(name);
+  if (name.length < 2 || key === normalizeText(CENTER_NAME) ||
+      key === normalizeText('Khác') || key === normalizeText(OTHER_DESTINATION)) return '';
+  return name;
+}
+function allHospitalChoices() {
+  if (!state.hospitalFixedOptions) {
+    state.hospitalFixedOptions = Array.from($('journeyTo')?.options || [])
+      .map((option) => option.value).filter((name) => name && name !== OTHER_DESTINATION);
+  }
+  const choices = new Map();
+  const add = (value) => {
+    const name = hospitalCandidate(value);
+    if (name && !choices.has(exactHospitalKey(name))) choices.set(exactHospitalKey(name), name);
+  };
+  state.hospitalFixedOptions.forEach(add);
+  [...state.openCases, ...state.closedCases].forEach((item) => {
+    add(item.noiHienTai);
+    Object.values(item.chang || {}).forEach((step) => { add(step?.noiDi); add(step?.noiDen); });
+    effectiveHistoryEvents(item).forEach((event) => {
+      if (['MO_HANH_TRINH','CHUYEN_TIEP'].includes(event.loaiSuKien)) { add(event.noiTruoc); add(event.noiSau); }
+    });
+  });
+  return Array.from(choices.values()).sort((a,b) => a.localeCompare(b, 'vi-VN'));
+}
+function refreshHospitalChoices() {
+  const names = allHospitalChoices();
+  const signature = JSON.stringify(names);
+  if (signature === state.hospitalOptionSignature) return;
+  state.hospitalOptionSignature = signature;
+  state.hospitalOptions = names;
+  const selectors = ['journeyTo','journeyUpdateDestination','journeyRetroFrom','journeyRetroTo'];
+  selectors.forEach((id) => {
+    const select = $(id);
+    if (!select) return;
+    const selected = select.value;
+    const label = select.options[0]?.textContent || 'Chọn bệnh viện';
+    const placeholder = document.createElement('option');
+    placeholder.value = ''; placeholder.textContent = label;
+    const elements = [placeholder];
+    names.forEach((name) => { const option = document.createElement('option'); option.value = name; option.textContent = name; elements.push(option); });
+    const other = document.createElement('option'); other.value = OTHER_DESTINATION; other.textContent = 'Khác'; elements.push(other);
+    select.replaceChildren(...elements);
+    select.value = selected;
+    if (select.value !== selected && selected && selected !== OTHER_DESTINATION) {
+      // Không tự xóa lựa chọn đang điền khi dữ liệu realtime đổi.
+      const existing = document.createElement('option');
+      existing.value = selected; existing.textContent = selected;
+      select.add(existing, select.options.length - 1); select.value = selected;
+    }
+  });
+  const suggestions = $('journeyHospitalSuggestions');
+  if (suggestions) suggestions.replaceChildren(...names.map((name) => {
+    const option = document.createElement('option'); option.value = name; return option;
+  }));
+  updateHospitalHint('journeyRetroFromOther','journeyRetroFromHint');
+  updateHospitalHint('journeyRetroToOther','journeyRetroToHint');
+}
+function canonicalHospitalName(value) {
+  const input = cleanHospitalName(value);
+  return state.hospitalOptions.find((name) => exactHospitalKey(name) === exactHospitalKey(input)) || input;
+}
+function updateHospitalHint(inputId, hintId) {
+  const input = $(inputId), hint = $(hintId);
+  if (!input || !hint) return;
+  const typed = cleanHospitalName(input.value);
+  const matched = typed && state.hospitalOptions.find((name) => normalizeText(name) === normalizeText(typed));
+  hint.textContent = matched && exactHospitalKey(matched) !== exactHospitalKey(typed)
+    ? `Tên tương tự đã có: ${matched}. Vui lòng xác nhận đúng cơ sở trước khi lưu.` : '';
+}
+function retroHospitalSelection(selectId, otherId) {
+  const raw = resolvedDestination(selectId, otherId);
+  return canonicalHospitalName(raw);
+}
+function toggleRetroDestination(selectId, fieldId) {
+  // Giữ nội dung ô Khác nếu người dùng tạm chuyển sang lựa chọn có sẵn rồi quay lại.
+  const field = $(fieldId);
+  if (field) field.hidden = $(selectId)?.value !== OTHER_DESTINATION;
+}
+function validBusinessClock(value) { return /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value || '')); }
+
 function resolvedDestination(selectId, otherId) {
   const selected = String($(selectId)?.value || '').trim();
   if (!selected) return '';
@@ -395,7 +488,31 @@ function effectiveHistoryEvents(item) {
       rows.push(after ? { ...event, ...after, _sourceId: event._sourceId, _corrected: true, _correction: c } : event);
     } else rows.push(event);
   });
-  rows.sort((a, b) => String(eventBusinessDate(a, item) || '').localeCompare(String(eventBusinessDate(b, item) || '')) || Number(a.createdAt || 0) - Number(b.createdAt || 0));
+  rows.sort((a, b) => {
+    const dates = String(eventBusinessDate(a, item) || '').localeCompare(String(eventBusinessDate(b, item) || ''));
+    if (dates) return dates;
+    // Ngày trùng nhau: dựa trên loại sự kiện và luồng cơ sở điều trị, không dùng giờ nhập để
+    // đảo chỗ sự kiện hồi cứu. Giữ nguyên thứ tự cũ cho các dữ liệu legacy không thuộc hồi cứu.
+    if (a.hoiCuuBoSung || b.hoiCuuBoSung) {
+      if (a.loaiSuKien === 'MO_HANH_TRINH' && b.loaiSuKien !== 'MO_HANH_TRINH') return -1;
+      if (b.loaiSuKien === 'MO_HANH_TRINH' && a.loaiSuKien !== 'MO_HANH_TRINH') return 1;
+      if (CLOSED_STATUSES.includes(String(a.trangThaiSau || '')) && !CLOSED_STATUSES.includes(String(b.trangThaiSau || ''))) return 1;
+      if (CLOSED_STATUSES.includes(String(b.trangThaiSau || '')) && !CLOSED_STATUSES.includes(String(a.trangThaiSau || ''))) return -1;
+      const ab = normalizeText(a.noiSau) && normalizeText(a.noiSau) === normalizeText(b.noiTruoc);
+      const ba = normalizeText(b.noiSau) && normalizeText(b.noiSau) === normalizeText(a.noiTruoc);
+      if (ab && !ba) return -1;
+      if (ba && !ab) return 1;
+    }
+    // Giờ cũ được giữ nguyên và chỉ dùng cho các event đã có giờ xác thực.
+    if (validBusinessClock(a.gioSuKien) && validBusinessClock(b.gioSuKien))
+      return a.gioSuKien.localeCompare(b.gioSuKien);
+    if (a.hoiCuuBoSung || b.hoiCuuBoSung) {
+      // Khi không đủ liên kết cơ sở, dùng khóa ổn định để hiển thị tạm;
+      // bộ kiểm tra khoảng trống hiển thị cảnh báo, không coi thứ tự nhập là thứ tự đi viện.
+      return String(a._sourceId || '').localeCompare(String(b._sourceId || ''));
+    }
+    return Number(a.createdAt || 0) - Number(b.createdAt || 0);
+  });
   return rows;
 }
 function activeDuplicate(payload) {
@@ -696,6 +813,7 @@ function applyJourneySnapshot(journeySnap) {
   state.closedCases = all.filter((item) => item.trangThaiKyThuat === 'CLOSED')
     .sort((a, b) => String(historyBusinessDate(b) || '').localeCompare(String(historyBusinessDate(a) || '')) || Number(b.updatedAt || b.ngayGioVe || 0) - Number(a.updatedAt || a.ngayGioVe || 0));
   state.loadedAt = Date.now();
+  refreshHospitalChoices();
   renderTracking();
   renderHistory();
   showState('journeyTrackingLoadState', '', '', false);
@@ -2055,7 +2173,7 @@ async function saveJourneyCorrection(action) {
 
 
 // YC-YTE-007: Bổ sung hồi cứu là một event mới của case CLOSED, không sửa event kết thúc.
-const RETRO_FIELD_IDS = ['journeyRetroDate', 'journeyRetroFrom', 'journeyRetroTo', 'journeyRetroDiagnosis', 'journeyRetroNote'];
+const RETRO_FIELD_IDS = ['journeyRetroDate', 'journeyRetroFrom', 'journeyRetroFromOther', 'journeyRetroTo', 'journeyRetroToOther', 'journeyRetroDiagnosis', 'journeyRetroNote'];
 function retroFormSignature() { return formSignature(RETRO_FIELD_IDS); }
 function closedForRetro(item) {
   return item && item.trangThaiKyThuat === 'CLOSED' &&
@@ -2075,35 +2193,44 @@ function validateRetroInsertion(item, candidate) {
   const end = eventBusinessDate(last, item);
   const {date, from, to} = candidate;
   if (!validIsoBusinessDate(date) || date > todayIso()) throw new Error('Ngày chuyển tiếp không hợp lệ.');
-  if (!start || !end || date <= start || date >= end) {
-    throw new Error(`Ngày chuyển tiếp phải sau ${formatBusinessDate(start)} và trước ngày kết thúc ${formatBusinessDate(end)}.`);
-  }
+  if (!start || !end) throw new Error('Chưa xác định được ngày bắt đầu hoặc ngày kết thúc hành trình.');
+  if (date < start) throw new Error(`Ngày ${formatBusinessDate(date)} sớm hơn ngày chuyển viện ban đầu ${formatBusinessDate(start)} đã lưu. Vui lòng kiểm tra hoặc điều chỉnh sự kiện mở hành trình trước khi bổ sung; hệ thống không tự thay ngày bắt đầu.`);
+  if (date > end) throw new Error(`Ngày chuyển tiếp không thể sau ngày kết thúc ${formatBusinessDate(end)}.`);
   if (!from || !to || from.length > 300 || to.length > 300) throw new Error('Vui lòng nhập đầy đủ nơi đi và nơi đến (không quá 300 ký tự).');
   if (normalizeText(from) === normalizeText(to)) throw new Error('Nơi đi và nơi đến phải khác nhau.');
   if (normalizeText(from) === normalizeText(CENTER_NAME)) throw new Error('Đây là chuyển tiếp giữa các bệnh viện; không được chọn Trung tâm làm nơi đi.');
   if (normalizeText(to) === normalizeText(CENTER_NAME)) throw new Error('Đây là chuyển tiếp giữa các bệnh viện; không được chọn Trung tâm làm nơi đến.');
-  // Không có thông tin giờ nghiệp vụ; không tự suy diễn thứ tự hai sự kiện cùng ngày.
-  if (events.some((event) => eventBusinessDate(event, item) === date)) {
-    throw new Error('Ngày này đã có sự kiện. Nếu có nhiều sự kiện cùng ngày, cần điều chỉnh thủ công với thời gian nghiệp vụ rõ ràng; không tự sắp xếp theo giờ nhập.');
+  // Chỉ cần ngày: xác định thứ tự cùng ngày từ liên kết bệnh viện, không yêu cầu giờ.
+  // Kiểm tra tên nơi đi/nơi đến và chặn chặng trùng; không sử dụng giờ nhập để giả định thứ tự nghiệp vụ.
+  const sameDay = events.filter((event) => eventBusinessDate(event, item) === date);
+  const sameDayTransfers = sameDay.filter((event) => event.loaiSuKien === 'CHUYEN_TIEP');
+  // Có thể nhập theo thứ tự bất kỳ trong cùng ngày. Chỉ chặn khi hai chặng
+  // cùng ngày khẳng định nơi đi/đến mâu thuẫn, hoặc trùng chính xác.
+  // Thiếu liên kết thì lưu từng phần, thông báo khi xem timeline; không bịa giờ.
+  if (sameDayTransfers.some((event) =>
+    (normalizeText(event.noiTruoc) === normalizeText(from) && normalizeText(event.noiSau) !== normalizeText(to)) ||
+    (normalizeText(event.noiSau) === normalizeText(to) && normalizeText(event.noiTruoc) !== normalizeText(from)))) {
+    throw new Error('Ngày này đã có chặng chuyển tiếp dùng cùng nơi đi hoặc nơi đến nhưng khác nội dung. Vui lòng kiểm tra để tránh sai thứ tự khi không nhập giờ.');
   }
   if (events.some((event) => event.loaiSuKien === 'CHUYEN_TIEP' &&
       normalizeText(event.noiTruoc) === normalizeText(from) && normalizeText(event.noiSau) === normalizeText(to))) {
     throw new Error('Chặng chuyển tiếp này đã được ghi nhận trong hành trình.');
   }
-  const next = events.find((event) => eventBusinessDate(event, item) > date);
-  const endPlace = String(last.noiTuVong || last.noiSau || item.noiHienTai || '').trim();
-  const nextDate = eventBusinessDate(next, item);
-  const nextIsClosed = next && CLOSED_STATUSES.includes(String(next.trangThaiSau || ''));
-  if (nextIsClosed && nextDate && Date.parse(nextDate + 'T00:00:00Z') - Date.parse(date + 'T00:00:00Z') === 86400000 &&
-    item.trangThaiHienTai === 'TU_VONG_TAI_BENH_VIEN' && endPlace && normalizeText(to) !== normalizeText(endPlace)) {
-    throw new Error('Nơi đến trước ngày kết thúc không khớp nơi kết thúc hành trình. Vui lòng kiểm tra bệnh viện.');
-  }
+  // Nếu thiếu chặng nối đến nơi kết thúc, cho lưu từng phần và cảnh báo ở timeline.
   return { events, first, last, start, end };
 }
 function retroTimelineGaps(item) {
   if (!retroEventsPresent(item)) return false;
   const steps = effectiveHistoryEvents(item).filter((event) => ['MO_HANH_TRINH','CHUYEN_TIEP'].includes(event.loaiSuKien));
-  return steps.some((step, i) => i > 0 && normalizeText(step.noiTruoc) !== normalizeText(steps[i - 1].noiSau));
+  if (steps.some((step, i) => i > 0 && normalizeText(step.noiTruoc) !== normalizeText(steps[i - 1].noiSau))) return true;
+  const events = effectiveHistoryEvents(item);
+  const ending = events[events.length - 1];
+  if (ending && ['TU_VONG_TAI_BENH_VIEN', 'HOI_GIA_TAI_BENH_VIEN'].includes(ending.trangThaiSau)) {
+    const endPlace = String(ending.noiTuVong || ending.noiSau || item.noiHienTai || '').trim();
+    const lastPlace = String(steps[steps.length - 1]?.noiSau || '').trim();
+    if (endPlace && lastPlace && normalizeText(endPlace) !== normalizeText(lastPlace)) return true;
+  }
+  return false;
 }
 function openJourneyRetro() {
   const item = state.selectedCase;
@@ -2111,8 +2238,8 @@ function openJourneyRetro() {
   const events = effectiveHistoryEvents(item);
   const first = events[0], last = events[events.length - 1];
   const start = eventBusinessDate(first, item), end = eventBusinessDate(last, item);
-  if (!start || !end || Date.parse(end + 'T00:00:00Z') - Date.parse(start + 'T00:00:00Z') <= 86400000) {
-    showToast('Hành trình không có ngày trống giữa ngày bắt đầu và ngày kết thúc để bổ sung chuyển tiếp.', 'err'); return;
+  if (!start || !end || start > end) {
+    showToast('Không xác định được khoảng ngày hợp lệ của hành trình. Vui lòng kiểm tra Lịch sử.', 'err'); return;
   }
   state.retroCaseId = item.id;
   state.retroFromDetail = true;
@@ -2120,11 +2247,17 @@ function openJourneyRetro() {
   $('journeyRetroSubtitle').textContent = `Hành trình vẫn kết thúc ngày ${formatBusinessDate(end)} (${statusLabel(item.trangThaiHienTai)}).`;
   const dateField = $('journeyRetroDate');
   const d = new Date(Date.parse(end + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10);
-  dateField.value = d;
-  dateField.min = new Date(Date.parse(start + 'T00:00:00Z') + 86400000).toISOString().slice(0, 10);
-  dateField.max = d;
+  dateField.value = d >= start ? d : end;
+  // Cho phép duyệt cả tháng/năm trước. Ngày quá sớm/quá muộn được kiểm tra rõ khi lưu.
+  dateField.removeAttribute('min');
+  dateField.max = todayIso();
+  refreshHospitalChoices();
   $('journeyRetroFrom').value = '';
   $('journeyRetroTo').value = '';
+  $('journeyRetroFromOther').value = '';
+  $('journeyRetroToOther').value = '';
+  toggleRetroDestination('journeyRetroFrom', 'journeyRetroFromOtherField');
+  toggleRetroDestination('journeyRetroTo', 'journeyRetroToOtherField');
   $('journeyRetroDiagnosis').value = '';
   $('journeyRetroNote').value = '';
   $('journeyRetroError').textContent = '';
@@ -2156,10 +2289,23 @@ async function saveJourneyRetro() {
   try {
     const caseId = state.retroCaseId;
     const date = String($('journeyRetroDate').value || '').trim();
-    const from = String($('journeyRetroFrom').value || '').trim();
-    const to = String($('journeyRetroTo').value || '').trim();
+    const from = retroHospitalSelection('journeyRetroFrom', 'journeyRetroFromOther');
+    const to = retroHospitalSelection('journeyRetroTo', 'journeyRetroToOther');
     const diagnosis = String($('journeyRetroDiagnosis').value || '').trim();
     const note = String($('journeyRetroNote').value || '').trim();
+    // Không tự gộp hai cơ sở chỉ vì cách viết không dấu/khác dấu tương tự.
+    for (const [selector, name] of [['journeyRetroFrom', from], ['journeyRetroTo', to]]) {
+      if ($(selector)?.value !== OTHER_DESTINATION) continue;
+      const near = state.hospitalOptions.find((known) => normalizeText(known) === normalizeText(name) && exactHospitalKey(known) !== exactHospitalKey(name));
+      if (near) {
+        const isDistinct = await confirmInApp({
+          title: 'Xác nhận tên cơ sở y tế',
+          message: `Tên “${name}” tương tự “${near}” đã có trong danh sách. Đây có phải là một cơ sở khác không? Chọn Hủy để quay lại chọn tên có sẵn nếu là cùng một cơ sở.`,
+          confirmText: 'Là cơ sở khác', cancelText: 'Quay lại chọn tên'
+        });
+        if (!isDistinct) throw new Error('Vui lòng chọn tên cơ sở đã có hoặc xác nhận đúng tên mới.');
+      }
+    }
     if (!diagnosis || diagnosis.length > 1500) throw new Error('Vui lòng nhập Tình trạng / chẩn đoán (tối đa 1.500 ký tự).');
     if (note.length > 2000) throw new Error('Ghi chú không được quá 2.000 ký tự.');
     // Đọc lại bản gốc ngay trước khi ghi, không tin dữ liệu modal có thể đã cũ.
@@ -2167,7 +2313,9 @@ async function saveJourneyRetro() {
     if (!snapshot.exists()) throw new Error('Không tìm thấy hành trình, vui lòng tải lại.');
     const latest = caseFromRaw(caseId, snapshot.val());
     const {events} = validateRetroInsertion(latest, { date, from, to });
-    const predecessor = [...events].reverse().find((event) => eventBusinessDate(event, latest) < date);
+    const predecessor = [...events].reverse().find((event) =>
+      eventBusinessDate(event, latest) < date ||
+      (eventBusinessDate(event, latest) === date && normalizeText(event.noiSau) === normalizeText(from)));
     const eventId = push(ref(db, `${REPORT_ROOT}/hanhTrinhChuyenVien/${caseId}/lichSu`)).key;
     const stageId = push(ref(db, `${REPORT_ROOT}/hanhTrinhChuyenVien/${caseId}/chang`)).key;
     const logId = push(ref(db, `${REPORT_ROOT}/nhatKy/${date.slice(0, 7)}`)).key;
@@ -2421,6 +2569,13 @@ function initEvents() {
   $('journeyRetroClose')?.addEventListener('click', requestCloseJourneyRetro);
   $('journeyRetroCancel')?.addEventListener('click', requestCloseJourneyRetro);
   $('journeyRetroSave')?.addEventListener('click', saveJourneyRetro);
+  for (const [selector, field, input, hint] of [
+    ['journeyRetroFrom','journeyRetroFromOtherField','journeyRetroFromOther','journeyRetroFromHint'],
+    ['journeyRetroTo','journeyRetroToOtherField','journeyRetroToOther','journeyRetroToHint']
+  ]) {
+    $(selector)?.addEventListener('change', () => toggleRetroDestination(selector, field));
+    $(input)?.addEventListener('input', () => updateHospitalHint(input, hint));
+  }
   $('journeyRetroLayer')?.addEventListener('click', (event) => { if (event.target === $('journeyRetroLayer')) void requestCloseJourneyRetro(); });
   $('journeyCorrectionClose')?.addEventListener('click', closeJourneyCorrection);
   $('journeyCorrectionCancel')?.addEventListener('click', closeJourneyCorrection);

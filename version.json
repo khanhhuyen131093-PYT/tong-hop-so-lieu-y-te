@@ -1,7 +1,7 @@
 {
-  "version": "10.0.21",
+  "version": "10.0.23",
   "releasedAt": "2026-10-15",
-  "title": "YC-YTE-007 – Bổ sung chuyển tiếp hồi cứu trong cùng hành trình CLOSED",
-  "businessBaseline": "v10.0.19 (YC-YTE-001–005) + YC-YTE-006, giữ trạng thái tử vong và marker độc lập",
-  "message": "Chỉ thêm sự kiện CHUYEN_TIEP vào lịch sử, giữ nguyên kết thúc, thống kê và phân quyền."
+  "title": "YC-YTE-009 – Chỉ chọn ngày chuyển tiếp, không nhập giờ",
+  "businessBaseline": "v10.0.22 (YC-YTE-001–008), giữ CLOSED/marker, dropdown cơ sở y tế và audit",
+  "message": "Loại bỏ trường giờ chuyển tiếp hồi cứu; cho chọn ngày quá khứ (kể cả tháng trước); kiểm tra mốc mở/kết thúc, bảo toàn thời điểm audit và dữ liệu legacy."
 }
